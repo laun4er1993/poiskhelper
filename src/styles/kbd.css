@@ -1,0 +1,21 @@
+/* =====================================================
+   src/styles/kbd.css
+   Клавиши (kbd) — единый стиль по всему приложению
+   ===================================================== */
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  padding: 2px 7px;
+  background-color: var(--kbd-bg, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--kbd-border, rgba(255, 255, 255, 0.12));
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1;
+}

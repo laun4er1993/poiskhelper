@@ -1,0 +1,79 @@
+/* =====================================================
+   src/styles/utilities.css
+   Вспомогательные классы
+   ===================================================== */
+
+.text-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-mono {
+  font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.no-select {
+  user-select: none;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* Универсальный мягкий оверлей поверх картинки или превью */
+.surface-overlay {
+  background-color: var(--overlay-soft);
+}
+
+/* Шахматная заливка (для превью иконок/прозрачностей) */
+.checker-bg {
+  background-color: var(--bg-app);
+  background-image:
+    linear-gradient(45deg, var(--stripe-pattern-color) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--stripe-pattern-color) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--stripe-pattern-color) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--stripe-pattern-color) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+/* Общий стиль модальных backdrop'ов */
+.backdrop-base {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--backdrop);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.15s ease;
+}
+
+/* Скелет-загрузка */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-surface) 0%,
+    var(--bg-surface-hover) 50%,
+    var(--bg-surface) 100%
+  );
+  background-size: 400px 100%;
+  animation: shimmer 1.4s linear infinite;
+  border-radius: var(--radius-small);
+}
+
+/* Фокус */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Печать */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}

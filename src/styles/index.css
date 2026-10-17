@@ -1,0 +1,12 @@
+/* =====================================================
+   src/styles/index.css
+   Единая точка входа для всех стилей
+   ===================================================== */
+
+@import './reset.css';
+@import './scrollbars.css';
+@import './animations.css';
+@import './cesium.css';
+@import './kbd.css';
+@import './utilities.css';
+@import './drag.css';

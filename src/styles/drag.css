@@ -1,0 +1,31 @@
+/* =====================================================
+   src/styles/drag.css
+   Состояние перетаскивания в дереве
+   ===================================================== */
+
+body.dragging * {
+  cursor: grabbing !important;
+}
+
+body.dragging *::before,
+body.dragging *::after {
+  pointer-events: none;
+}
+
+/* Псевдо-элементы при перетаскивании не мешают */
+.drag-ghost {
+  position: fixed;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  color: var(--accent-text);
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+  z-index: 9999;
+  font-family: 'Segoe UI', sans-serif;
+  white-space: nowrap;
+}

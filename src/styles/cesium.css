@@ -1,0 +1,41 @@
+/* =====================================================
+   src/styles/cesium.css
+   Стили Cesium — прячем лишнее, убираем артефакты
+   ===================================================== */
+
+.cesium-widget,
+.cesium-widget canvas {
+  outline: none !important;
+}
+
+.cesium-viewer-bottom {
+  display: none !important;
+}
+
+.cesium-viewer,
+.cesium-widget,
+.cesium-widget canvas {
+  user-select: none;
+}
+
+/* Скрываем дефолтный инфобокс и селектор (мы ими не пользуемся) */
+.cesium-infoBox,
+.cesium-selection-wrapper,
+.cesium-selection-wrapper-visible {
+  display: none !important;
+}
+
+/* Скрываем кнопки управления по умолчанию, если они где-то остались */
+.cesium-viewer-toolbar,
+.cesium-viewer-animationContainer,
+.cesium-viewer-timelineContainer,
+.cesium-viewer-fullscreenContainer {
+  display: none !important;
+}
+
+/* Скрываем кредиты (уже скрыто через JS, но на всякий) */
+.cesium-widget-credits,
+.cesium-credit-logoContainer,
+.cesium-credit-expand-link {
+  display: none !important;
+}
