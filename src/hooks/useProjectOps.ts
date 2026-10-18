@@ -1,6 +1,6 @@
 // =====================================================
 // src/hooks/useProjectOps.ts
-// Операции с проектами и файлами
+// Операции с проектами и файлами — с импортом через importDefaults
 // =====================================================
 
 import { useCallback, useRef } from 'react';
@@ -32,15 +32,13 @@ import {
   readKmlDocument,
   parseKmlDocumentToTree,
   countTreeItems,
+  countTreeItemsByType,
   buildKmlFolder,
   exportTreeToKmz,
   exportTreeToKml,
 } from '../services/kml';
 import { applyTerrainHeightsToTree } from '../utils/terrain';
 
-// =====================================================
-// Параметры
-// =====================================================
 interface UseProjectOpsParams {
   project: UseProjectStateResult;
   ui: UseUIStateResult;
@@ -51,9 +49,6 @@ interface UseProjectOpsParams {
   setRecentProjects: React.Dispatch<React.SetStateAction<any[]>>;
 }
 
-// =====================================================
-// Хук
-// =====================================================
 export function useProjectOps(params: UseProjectOpsParams) {
   const {
     project,
@@ -126,9 +121,7 @@ export function useProjectOps(params: UseProjectOpsParams) {
   );
 
   // =====================================================
-  // ⚡ Новый проект
-  // После создания — открываем ProjectDetailsDialog для настройки
-  // (включая выбор базовой карты)
+  // Новый проект
   // =====================================================
   const handleNewProject = useCallback(
     function () {
@@ -136,10 +129,6 @@ export function useProjectOps(params: UseProjectOpsParams) {
         performResetProject();
         logger.addLog('new', 'Создан новый проект');
         ui.setShowWelcome(false);
-
-        // ⚡ Открываем диалог настроек нового проекта
-        // Пользователь сразу может задать название, автора,
-        // базовую карту и т.д.
         setTimeout(function () {
           ui.setShowProjectDetails(true);
         }, 300);
@@ -224,7 +213,6 @@ export function useProjectOps(params: UseProjectOpsParams) {
           } catch (e) {}
         }
 
-        // Асинхронно проверяем высоты
         if (viewer && !viewer.isDestroyed()) {
           setTimeout(async function () {
             try {
@@ -456,38 +444,125 @@ export function useProjectOps(params: UseProjectOpsParams) {
   );
 
   // =====================================================
-  // Импорт
+  // ⚡ Импорт KML/KMZ — использует settings.importDefaults
   // =====================================================
   const handleImport = useCallback(async function () {
+    console.log('[import] клик по кнопке импорта');
+    logger.addLog('import', 'Импорт KML/KMZ — старт');
+
     const viewer = viewerRef.current;
     if (!viewer) {
-      alert('Глобус не загружен.');
+      const msg = 'Глобус не загружен — импорт невозможен.';
+      console.error('[import]', msg);
+      logger.addLog('import', msg);
+      alert(msg);
       return;
     }
+
     try {
-      const result = await openKmlFile();
-      if (!result) return;
+      console.log('[import] открываю диалог + чтение с прогрессом…');
+
+      ui.setLoading({
+        visible: true,
+        message: 'Выбор файла',
+        subMessage: 'Открывается диалог…',
+        kind: 'spinner',
+      });
+
+      const result = await openKmlFile({
+        onProgress: function (p) {
+          const loadedMb = (p.loadedBytes / 1024 / 1024).toFixed(1);
+          const elapsedSec = (p.elapsedMs / 1000).toFixed(1);
+
+          let sub: string;
+          if (p.loadedBytes === 0) {
+            sub = 'Открытие файла…';
+          } else if (p.stalled) {
+            sub =
+              'Прочитано ' +
+              loadedMb +
+              ' МБ за ' +
+              elapsedSec +
+              ' с — возможно, чтение зависло, ждите…';
+          } else {
+            sub =
+              'Прочитано ' +
+              loadedMb +
+              ' МБ за ' +
+              elapsedSec +
+              ' с' +
+              (p.chunkCount > 0
+                ? ' (' + p.chunkCount + ' чанков)'
+                : '');
+          }
+
+          const soft = 256 * 1024 * 1024;
+          const progress =
+            p.loadedBytes > 0
+              ? Math.min(0.95, p.loadedBytes / soft)
+              : undefined;
+
+          ui.setLoading({
+            visible: true,
+            message: 'Чтение файла',
+            subMessage: sub,
+            progress: progress,
+            kind: 'progress',
+          });
+        },
+      });
+
+      console.log(
+        '[import] результат диалога:',
+        result
+          ? 'OK: ' +
+              result.name +
+              ' (' +
+              (result.sizeBytes / 1024 / 1024).toFixed(2) +
+              ' МБ)'
+          : 'null'
+      );
+
+      ui.setLoading(ui.DEFAULT_LOADING);
+
+      if (!result) {
+        logger.addLog(
+          'import',
+          'Диалог закрыт без выбора файла (или отменено пользователем)'
+        );
+        return;
+      }
+
       const fileName = result.name;
       const ext = result.extension;
       const rawBytes = result.data as Uint8Array;
-      if (!rawBytes || rawBytes.length === 0) {
-        alert('Файл пустой.');
-        return;
-      }
+
+      logger.addLog(
+        'import',
+        'Файл выбран: ' + fileName,
+        (rawBytes.length / 1024 / 1024).toFixed(1) + ' МБ'
+      );
+
       if (ext === 'kml' || ext === 'kmz') {
         ui.setLoading({
           visible: true,
-          message: 'Чтение файла',
-          subMessage: fileName,
+          message: 'Разбор документа',
+          subMessage: fileName + ' (' + ext.toUpperCase() + ')',
           kind: 'spinner',
         });
+
+        console.log('[import] читаю документ', ext);
         const parsed = await readKmlDocument(rawBytes, ext);
+        console.log('[import] документ прочитан OK');
+
         ui.setLoading({
           visible: true,
           message: 'Разбор объектов',
           subMessage: fileName,
           kind: 'spinner',
         });
+
+        // ⚡ previewOpts — только для подсчёта, без применения
         const previewOpts: ImportOptions = {
           color: colors.markerDefault,
           pixelSize: 6,
@@ -495,38 +570,98 @@ export function useProjectOps(params: UseProjectOpsParams) {
           flyToBounds: true,
           showLabels: true,
           showHidden: true,
+          startCollapsed: settings.importDefaults.startCollapsed,
         };
+
+        console.log('[import] парсинг объектов…');
         const previewChildren = parseKmlDocumentToTree(
           parsed.kmlDocument,
           previewOpts,
           fileName
         );
-        const totalCount = countTreeItems(previewChildren);
+        const byType = countTreeItemsByType(previewChildren);
+        const totalCount = byType.total;
+
+        console.log(
+          '[import] разобрано: total=' +
+            totalCount +
+            ' (place=' +
+            byType.places +
+            ', line=' +
+            byType.lines +
+            ', poly=' +
+            byType.polygons +
+            ', folders=' +
+            byType.folders +
+            ')'
+        );
+        logger.addLog(
+          'import',
+          'Разобрано: ' + totalCount + ' объектов',
+          'place=' +
+            byType.places +
+            ', line=' +
+            byType.lines +
+            ', poly=' +
+            byType.polygons
+        );
+
         ui.setLoading(ui.DEFAULT_LOADING);
+
         if (totalCount === 0) {
-          alert('В файле не найдено объектов.');
+          const msg =
+            'В файле не найдено объектов:\n' +
+            fileName +
+            '\n\nВозможные причины:\n' +
+            '• В KML нет Placemark/Point/LineString/Polygon\n' +
+            '• Неподдерживаемая структура (MultiGeometry без геометрий)\n' +
+            '• Пустой файл';
+          logger.addLog('import', 'Объектов не найдено');
+          alert(msg);
           return;
         }
+
         ui.setPendingImport({
-          fileName: fileName,
+          fileName,
           objectCount: totalCount,
           document: parsed.kmlDocument,
           sizeBytes: result.sizeBytes,
         });
+        logger.addLog(
+          'import',
+          'Ожидание подтверждения: ' + fileName
+        );
         return;
       }
-      alert('Неподдерживаемый формат.');
-    } catch (err: any) {
-      ui.setLoading(ui.DEFAULT_LOADING);
-      alert('Ошибка импорта:\n' + (err?.message || 'причина неизвестна'));
-    }
-  }, [ui, colors.markerDefault, viewerRef]);
 
+      const msg = 'Неподдерживаемый формат: .' + ext;
+      logger.addLog('import', msg);
+      alert(msg);
+    } catch (err: any) {
+      console.error('[import] ошибка:', err);
+      const msg = err?.message || 'причина неизвестна';
+      logger.addLog('import', 'Ошибка импорта: ' + msg);
+      ui.setLoading(ui.DEFAULT_LOADING);
+      alert(
+        'Ошибка импорта:\n' +
+          msg +
+          '\n\nПроверьте консоль (F12) для подробностей.'
+      );
+    }
+  }, [ui, colors.markerDefault, viewerRef, logger, settings.importDefaults]);
+
+  // =====================================================
+  // Подтверждение импорта
+  // =====================================================
   const handleImportConfirm = useCallback(
     async function (options: ImportOptions) {
       const pending = ui.pendingImport;
-      if (!pending) return;
+      if (!pending) {
+        console.warn('[import] handleImportConfirm: нет pendingImport');
+        return;
+      }
       const viewer = viewerRef.current;
+      console.log('[import] подтверждение, файл:', pending.fileName);
 
       ui.setLoading({
         visible: true,
@@ -541,6 +676,11 @@ export function useProjectOps(params: UseProjectOpsParams) {
           options,
           pending.fileName
         );
+        console.log(
+          '[import] парсинг в confirm: получено',
+          parsedChildren.length,
+          'корневых'
+        );
 
         if (parsedChildren.length === 0) {
           alert('Объектов нет.');
@@ -552,44 +692,56 @@ export function useProjectOps(params: UseProjectOpsParams) {
         let fixedChildren = parsedChildren;
 
         if (viewer && !viewer.isDestroyed() && viewer.terrainProvider) {
-          try {
-            ui.setLoading({
-              visible: true,
-              message: 'Уточнение высот рельефа',
-              subMessage: 'Обработка точек…',
-              kind: 'progress',
-            });
-
+          const totalPoints = countTreeItems(parsedChildren);
+          if (totalPoints > 2000) {
             console.log(
-              '[import] обновление высот для',
-              parsedChildren.length,
-              'корней'
+              '[import] точек больше 2000 (' +
+                totalPoints +
+                ') — пропускаю уточнение высот для скорости'
             );
-
-            const result = await applyTerrainHeightsToTree(
-              viewer.terrainProvider,
-              parsedChildren
+            logger.addLog(
+              'import',
+              'Пропущено уточнение высот (большой файл, ' +
+                totalPoints +
+                ' объектов)'
             );
-            fixedChildren = result.tree;
+          } else {
+            try {
+              ui.setLoading({
+                visible: true,
+                message: 'Уточнение высот рельефа',
+                subMessage: 'Обработка точек…',
+                kind: 'progress',
+              });
 
-            console.log('[import] обновлено высот:', result.updatedCount);
-
-            if (result.updatedCount > 0) {
-              logger.addLog(
-                'import',
-                'Высоты уточнены: ' + result.updatedCount + ' точек'
+              const result = await applyTerrainHeightsToTree(
+                viewer.terrainProvider,
+                parsedChildren
               );
+              fixedChildren = result.tree;
+              console.log('[import] высоты обновлены:', result.updatedCount);
+
+              if (result.updatedCount > 0) {
+                logger.addLog(
+                  'import',
+                  'Высоты уточнены: ' + result.updatedCount + ' точек'
+                );
+              }
+            } catch (e) {
+              console.warn('[import] ошибка высот:', e);
+              fixedChildren = parsedChildren;
             }
-          } catch (e) {
-            console.warn('[import] ошибка высот:', e);
-            fixedChildren = parsedChildren;
           }
         }
+
+        // ⚡ expanded — с учётом startCollapsed
+        const kmlExpanded = options.startCollapsed ? false : true;
 
         const kmlFolder = buildKmlFolder(
           pending.fileName,
           fixedChildren,
-          options.visible
+          options.visible,
+          kmlExpanded
         );
 
         project.setImportedItems(function (prev) {
@@ -598,10 +750,20 @@ export function useProjectOps(params: UseProjectOpsParams) {
         ui.setSelectedIds([kmlFolder.id]);
         ui.setLastClickedId(kmlFolder.id);
 
+        const byType = countTreeItemsByType(fixedChildren);
         logger.addLog(
           'import',
           'Импортирован: ' + pending.fileName,
-          'Объектов: ' + countTreeItems(fixedChildren)
+          'Объектов: ' +
+            byType.total +
+            ' (place=' +
+            byType.places +
+            ', line=' +
+            byType.lines +
+            ', poly=' +
+            byType.polygons +
+            ')' +
+            (options.visible === false ? ' [скрыто]' : '')
         );
         project.markDirty();
 
@@ -625,7 +787,10 @@ export function useProjectOps(params: UseProjectOpsParams) {
               if (c.type === 'place') {
                 const p = c as Place;
                 considerPoint(p.lat, p.lon);
-              } else if (c.type === 'kmlline' || c.type === 'kmlpolygon') {
+              } else if (
+                c.type === 'kmlline' ||
+                c.type === 'kmlpolygon'
+              ) {
                 const positions = (c as any).positions;
                 if (positions) {
                   positions.forEach(function (pt: any) {
@@ -663,7 +828,10 @@ export function useProjectOps(params: UseProjectOpsParams) {
         ui.setPendingImport(null);
         ui.setClickMode('select');
       } catch (err) {
-        alert('Ошибка обработки: ' + (err as Error).message);
+        console.error('[import] ошибка в confirm:', err);
+        const msg = (err as Error).message || 'причина неизвестна';
+        logger.addLog('import', 'Ошибка: ' + msg);
+        alert('Ошибка обработки:\n' + msg);
       } finally {
         ui.setLoading(ui.DEFAULT_LOADING);
       }
@@ -708,7 +876,8 @@ export function useProjectOps(params: UseProjectOpsParams) {
 
   const handleExportSelected = useCallback(
     async function (id?: string, _format?: 'kml' | 'kmz') {
-      const targetId = id || ui.selectedIds[ui.selectedIds.length - 1] || null;
+      const targetId =
+        id || ui.selectedIds[ui.selectedIds.length - 1] || null;
       if (!targetId) {
         alert('Выберите объект.');
         return;
@@ -852,6 +1021,7 @@ export function useProjectOps(params: UseProjectOpsParams) {
         const savedPath = await saveScreenshot(dataUrl, {
           autoSaveDir: settings.screenshot.autoSaveDir,
           prefixName: settings.screenshot.prefix || 'poiskhelper',
+          format: settings.screenshot.format,
         });
 
         if (!savedPath) {
@@ -907,9 +1077,6 @@ export function useProjectOps(params: UseProjectOpsParams) {
   };
 }
 
-// =====================================================
-// Утилита
-// =====================================================
 function findItemById(items: TreeItem[], id: string): TreeItem | null {
   if (!Array.isArray(items) || typeof id !== 'string') return null;
   for (let i = 0; i < items.length; i++) {

@@ -1,9 +1,16 @@
 // =====================================================
 // src/components/globe/GlobeViewer.tsx
-// Основной компонент 3D-глобуса
+// Основной компонент 3D-глобуса + React.memo
 // =====================================================
 
-import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
+import {
+  useRef,
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  memo,
+} from 'react';
 import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import type { TreeItem, Place } from '../../types/base';
@@ -33,6 +40,7 @@ import type {
 function GlobeViewer({
   items,
   importedItems,
+  previewOverrides,
   clickMode,
   settings,
   colors,
@@ -157,6 +165,7 @@ function GlobeViewer({
     viewerReady,
     items,
     importedItems,
+    previewOverrides,
     settings,
     colors,
     billboardsRef,
@@ -177,7 +186,7 @@ function GlobeViewer({
         if (v && !v.isDestroyed()) {
           try {
             v.resize();
-            v.render();
+            v.scene.requestRender();
           } catch (e) {}
         }
         setContainerSize(function (prev) {
@@ -211,6 +220,10 @@ function GlobeViewer({
     [viewerReady, viewerRef]
   );
 
+  // ⚡ Popup / createMenu — позиция пересчитывается раз в 200 мс,
+  //   но setState только если изменилось > 0.5 px. requestRenderMode
+  //   не мешает, потому что setState → ре-рендер React-компонента,
+  //   а не Cesium.
   useEffect(
     function () {
       if (!viewerReady) return;
@@ -610,6 +623,55 @@ function handleCopyCoordsInternalSafe(
   return fn;
 }
 
+// ⚡ React.memo с кастомным comparator — не перерисовывать GlobeViewer,
+//   если перерисовался App, но наши пропсы не изменились.
+function areGlobePropsEqual(
+  prev: GlobeViewerProps,
+  next: GlobeViewerProps
+): boolean {
+  if (prev.items !== next.items) return false;
+  if (prev.importedItems !== next.importedItems) return false;
+  if (prev.previewOverrides !== next.previewOverrides) return false;
+  if (prev.clickMode !== next.clickMode) return false;
+  if (prev.settings !== next.settings) return false;
+  if (prev.colors !== next.colors) return false;
+  if (prev.measurePoints !== next.measurePoints) return false;
+  if (prev.measureClosed !== next.measureClosed) return false;
+  if (prev.selectedId !== next.selectedId) return false;
+  if (prev.selectedItem !== next.selectedItem) return false;
+  if (prev.editingItemId !== next.editingItemId) return false;
+  if (prev.selectedMeasureIndex !== next.selectedMeasureIndex) return false;
+  if (prev.mapSource !== next.mapSource) return false;
+
+  // Колбэки: если App их не мемоизирует — memo сломается.
+  // У нас все через useCallback — ок. Проверяем на всякий случай.
+  if (prev.onMapSourceChange !== next.onMapSourceChange) return false;
+  if (prev.onNeedCustomDialog !== next.onNeedCustomDialog) return false;
+  if (prev.onDeleteCustom !== next.onDeleteCustom) return false;
+  if (prev.onViewerReady !== next.onViewerReady) return false;
+  if (prev.onMapClick !== next.onMapClick) return false;
+  if (prev.onSelectPlace !== next.onSelectPlace) return false;
+  if (prev.onSelectMeasurePoint !== next.onSelectMeasurePoint) return false;
+  if (prev.onStatusUpdate !== next.onStatusUpdate) return false;
+  if (prev.onClearMeasure !== next.onClearMeasure) return false;
+  if (prev.onUndoMeasure !== next.onUndoMeasure) return false;
+  if (prev.onRemoveMeasurePoint !== next.onRemoveMeasurePoint) return false;
+  if (prev.onToggleClosed !== next.onToggleClosed) return false;
+  if (prev.onSave !== next.onSave) return false;
+  if (prev.onSetRulerType !== next.onSetRulerType) return false;
+  if (prev.onMovePlace !== next.onMovePlace) return false;
+  if (prev.onMoveMeasurePoint !== next.onMoveMeasurePoint) return false;
+  if (prev.onMoveSavedMeasurePoint !== next.onMoveSavedMeasurePoint)
+    return false;
+  if (prev.onDragEnd !== next.onDragEnd) return false;
+  if (prev.onCopyMeasureCoords !== next.onCopyMeasureCoords) return false;
+  if (prev.onEditItem !== next.onEditItem) return false;
+  if (prev.onHideItem !== next.onHideItem) return false;
+  if (prev.onCreateAction !== next.onCreateAction) return false;
+
+  return true;
+}
+
 const styles: Record<string, React.CSSProperties> = {
   wrapper: {
     position: 'relative',
@@ -669,4 +731,4 @@ const styles: Record<string, React.CSSProperties> = {
   },
 };
 
-export default GlobeViewer;
+export default memo(GlobeViewer, areGlobePropsEqual);

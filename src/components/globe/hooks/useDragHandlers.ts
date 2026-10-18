@@ -1,6 +1,6 @@
 // =====================================================
 // src/components/globe/hooks/useDragHandlers.ts
-// Перетаскивание меток и точек измерения
+// Drag с throttle через requestAnimationFrame
 // =====================================================
 
 import { useEffect, useRef, useState } from 'react';
@@ -41,9 +41,7 @@ interface UseDragHandlersParams {
     lon: number,
     height: number
   ) => void;
-  /** Для авто-открытия панели при drag сохранённой measure */
   onEditItem?: (item: TreeItem) => void;
-  /** Доступ к дереву — чтобы найти measure по id */
   items: TreeItem[];
   importedItems: TreeItem[];
 }
@@ -161,6 +159,10 @@ export function useDragHandlers({
       let lastHeight: number | null = null;
       let cameraLocked = false;
 
+      // ⚡ RAF throttle — применяем последнее накопленное значение раз в кадр
+      let rafId: number | null = null;
+      let pendingMovement: any = null;
+
       const lockCamera = function () {
         if (cameraLocked) return;
         const c = viewer.scene.screenSpaceCameraController;
@@ -233,6 +235,10 @@ export function useDragHandlers({
             );
           }
         }
+
+        try {
+          viewer.scene.requestRender();
+        } catch (e) {}
       };
 
       const onLeftDown = function (click: any) {
@@ -249,17 +255,14 @@ export function useDragHandlers({
         const entity = picked.id as Cesium.Entity;
         if (!entity.properties) return;
 
-        // ⚡ Метка
         if (entity.properties.isPlace) {
           const id = entity.properties.placeId.getValue();
           const editingId = editingItemIdRef.current;
           if (!editingId || id !== editingId) return;
           dragCandidate = { type: 'place', id: id };
-          lockCamera();
           return;
         }
 
-        // ⚡ Точка измерения
         if (entity.properties.isMeasurePoint) {
           const idx = entity.properties.measureIndex
             ? entity.properties.measureIndex.getValue()
@@ -271,9 +274,10 @@ export function useDragHandlers({
             : null;
 
           if (measureId) {
-            // Сохранённая measure — разрешаем всегда.
-            // Если панель не открыта для неё — авто-открываем.
-            if (measureId !== editingItemIdRef.current && onEditItemRef.current) {
+            if (
+              measureId !== editingItemIdRef.current &&
+              onEditItemRef.current
+            ) {
               const all = itemsRef.current.concat(importedItemsRef.current);
               const measure = findMeasureById(all, measureId);
               if (measure) {
@@ -288,24 +292,15 @@ export function useDragHandlers({
           } else {
             dragCandidate = { type: 'measure', index: idx };
           }
-          lockCamera();
         }
       };
 
-      const onMouseMove = function (movement: any) {
-        if (!downPos || !movement || !movement.endPosition) return;
-        const dx = movement.endPosition.x - downPos.x;
-        const dy = movement.endPosition.y - downPos.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist > movedDistance) movedDistance = dist;
-
-        if (!dragCandidate) return;
-
-        if (!dragActive && dist > DRAG_THRESHOLD) {
-          dragActive = true;
-          setDragging(true);
-        }
-        if (!dragActive) return;
+      // ⚡ Обработка движения — вызывается раз в кадр через RAF
+      const applyPendingMovement = function () {
+        rafId = null;
+        if (!dragActive || !dragCandidate || !pendingMovement) return;
+        const movement = pendingMovement;
+        pendingMovement = null;
 
         const ray = viewer.camera.getPickRay(movement.endPosition);
         let cartesian: any = null;
@@ -324,22 +319,21 @@ export function useDragHandlers({
         lastHeight = carto.height;
 
         if (dragCandidate.type === 'place') {
+          // Обновляем позицию entity напрямую (быстрее чем через React)
           const values = viewer.entities.values;
+          const targetId = dragCandidate.id;
+          const newPos = new Cesium.ConstantPositionProperty(
+            Cesium.Cartesian3.fromDegrees(lastLon, lastLat, lastHeight || 0)
+          );
           for (let i = 0; i < values.length; i++) {
             const e = values[i];
             if (
               e.properties &&
               e.properties.isPlace &&
               e.properties.placeId &&
-              e.properties.placeId.getValue() === dragCandidate.id
+              e.properties.placeId.getValue() === targetId
             ) {
-              e.position = new Cesium.ConstantPositionProperty(
-                Cesium.Cartesian3.fromDegrees(
-                  lastLon,
-                  lastLat,
-                  lastHeight || 0
-                )
-              );
+              e.position = newPos;
             }
           }
           onMovePlaceRef.current(
@@ -366,10 +360,45 @@ export function useDragHandlers({
             );
           }
         }
+
+        try {
+          viewer.scene.requestRender();
+        } catch (e) {}
+      };
+
+      const onMouseMove = function (movement: any) {
+        if (!downPos || !movement || !movement.endPosition) return;
+        const dx = movement.endPosition.x - downPos.x;
+        const dy = movement.endPosition.y - downPos.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > movedDistance) movedDistance = dist;
+
+        if (!dragCandidate) return;
+
+        if (!dragActive && dist > DRAG_THRESHOLD) {
+          dragActive = true;
+          setDragging(true);
+          lockCamera();
+        }
+        if (!dragActive) return;
+
+        // ⚡ Накапливаем последнее положение, применяем через RAF
+        pendingMovement = movement;
+        if (rafId === null) {
+          rafId = window.requestAnimationFrame(applyPendingMovement);
+        }
       };
 
       const onLeftUp = function () {
         if (!downPos) return;
+        if (rafId !== null) {
+          window.cancelAnimationFrame(rafId);
+          rafId = null;
+        }
+        // Применяем последнее накопленное
+        if (dragActive && pendingMovement) {
+          applyPendingMovement();
+        }
         finishDrag();
         downPos = null;
         movedDistance = 0;
@@ -382,6 +411,13 @@ export function useDragHandlers({
 
       const docMouseUp = function () {
         if (dragActive || dragCandidate) {
+          if (rafId !== null) {
+            window.cancelAnimationFrame(rafId);
+            rafId = null;
+          }
+          if (dragActive && pendingMovement) {
+            applyPendingMovement();
+          }
           finishDrag();
           downPos = null;
           movedDistance = 0;
@@ -390,6 +426,10 @@ export function useDragHandlers({
       document.addEventListener('mouseup', docMouseUp);
 
       return function () {
+        if (rafId !== null) {
+          window.cancelAnimationFrame(rafId);
+          rafId = null;
+        }
         try {
           handler.destroy();
         } catch (e) {}
@@ -403,9 +443,6 @@ export function useDragHandlers({
   return { dragging };
 }
 
-// -----------------------------------------------------
-// Поиск measure по id (в дереве и imported)
-// -----------------------------------------------------
 function findMeasureById(
   items: TreeItem[],
   id: string

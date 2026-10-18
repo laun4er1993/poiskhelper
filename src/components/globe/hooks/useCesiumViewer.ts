@@ -1,6 +1,6 @@
 // =====================================================
 // src/components/globe/hooks/useCesiumViewer.ts
-// Инициализация Cesium Viewer и очистка при unmount
+// Инициализация Cesium Viewer + requestRenderMode
 // =====================================================
 
 import { useEffect, useRef, useState } from 'react';
@@ -64,7 +64,12 @@ export function useCesiumViewer(
             fullscreenButton: false,
             infoBox: false,
             selectionIndicator: false,
-            requestRenderMode: false,
+            // ⚡ requestRenderMode — рендерим по требованию.
+            //   maximumRenderTimeChange: 0.5 — fallback-рендер раз в 0.5 с,
+            //   чтобы картинка не застывала, если requestRender() пропущен.
+            //   Это устраняет «дёрганность» при плавном движении камеры.
+            requestRenderMode: true,
+            maximumRenderTimeChange: 0.5,
           });
 
           // Скрываем кредиты
@@ -72,9 +77,7 @@ export function useCesiumViewer(
             .creditContainer as HTMLElement;
           if (creditContainer) creditContainer.style.display = 'none';
 
-          // ⚡ Убираем дефолтное поведение двойного клика
-          // (оно ставит trackedEntity и делает zoomTo — это и есть
-          // «привязка камеры к точке» и «зум при двойном клике»)
+          // Убираем дефолтный двойной клик
           try {
             const evtHandler =
               localViewer.cesiumWidget.screenSpaceEventHandler;
@@ -87,12 +90,30 @@ export function useCesiumViewer(
             console.warn('Не удалось отключить двойной клик:', e);
           }
 
-          // ⚡ Отключаем zoomTo при двойном клике на пустом месте
-          // (это делает screenSpaceCameraController по умолчанию)
+          // ⚡ requestRender() на любое движение камеры.
+          //   Это главный фикс «дёрганности»: пока камера двигается —
+          //   рендер идёт каждый кадр, а не раз в 0.5 с.
           try {
-            // Ничего не настраиваем здесь — отключение обработчика
-            // LEFT_DOUBLE_CLICK достаточно
-          } catch (e) {}
+            localViewer.camera.percentageChanged = 0.001;
+            localViewer.camera.changed.addEventListener(function () {
+              if (localViewer && !localViewer.isDestroyed()) {
+                try {
+                  localViewer.scene.requestRender();
+                } catch (e) {}
+              }
+            });
+          } catch (e) {
+            console.warn('camera.changed listener error:', e);
+          }
+
+          // Первый рендер
+          setTimeout(function () {
+            if (localViewer && !localViewer.isDestroyed()) {
+              try {
+                localViewer.scene.requestRender();
+              } catch (e) {}
+            }
+          }, 100);
 
           viewerRef.current = localViewer;
           onViewerReadyRef.current(localViewer);

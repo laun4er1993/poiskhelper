@@ -14,12 +14,14 @@
     "@tauri-apps/plugin-dialog": "^2.8.3",
     "@tauri-apps/plugin-fs": "^2.7.1",
     "@tauri-apps/plugin-opener": "^2",
+    "@zip.js/zip.js": "^2.24.0",
     "@znemz/cesium-navigation": "^6.0.9",
     "cesium": "^1.146.0",
     "jszip": "^3.10.2",
     "lucide-react": "^1.57.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "saxes": "^6.0.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

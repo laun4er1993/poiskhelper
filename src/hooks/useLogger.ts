@@ -1,15 +1,19 @@
 // =====================================================
 // src/hooks/useLogger.ts
-// Журнал действий: логи, очистка, экспорт в TXT
+// Журнал действий с буферизацией (flush раз в 300 мс)
 // =====================================================
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
 import type { LogEntry, LogType } from '../types/logs';
 import { generateId } from '../types/ids';
 import { saveFileDialog } from '../services/file/dialogs';
 
 const MAX_LOG_ENTRIES = 500;
+// ⚡ B10: накапливаем записи в буфере и сливаем раз в 300 мс.
+//   При импорте 5000 объектов это не 5000 setState, а ~15.
+const FLUSH_INTERVAL_MS = 300;
+const FLUSH_THRESHOLD = 50;
 
 function formatTime(): string {
   const d = new Date();
@@ -32,25 +36,24 @@ export interface UseLoggerResult {
   addLog: (type: LogType, message: string, details?: string) => void;
   clearLogs: () => void;
   exportLogs: () => Promise<void>;
+  flush: () => void;
 }
 
 export function useLogger(): UseLoggerResult {
   const [logs, setLogs] = useState<LogEntry[]>([]);
 
-  const addLog = useCallback(function (
-    type: LogType,
-    message: string,
-    details?: string
-  ) {
-    const entry: LogEntry = {
-      id: generateId('log'),
-      time: formatTime(),
-      type: type,
-      message: message,
-      details: details,
-    };
+  // ⚡ Буфер — накапливает записи, чтобы не дёргать setState на каждую
+  const bufferRef = useRef<LogEntry[]>([]);
+  const flushTimerRef = useRef<number | null>(null);
+
+  const flush = useCallback(function () {
+    const buffer = bufferRef.current;
+    if (buffer.length === 0) return;
+    bufferRef.current = [];
+
     setLogs(function (prev) {
-      const next = [entry].concat(prev);
+      // Новые записи в начале (свежие сверху)
+      const next = buffer.concat(prev);
       if (next.length > MAX_LOG_ENTRIES) {
         return next.slice(0, MAX_LOG_ENTRIES);
       }
@@ -58,18 +61,59 @@ export function useLogger(): UseLoggerResult {
     });
   }, []);
 
+  // Периодический flush
+  useEffect(function () {
+    const id = window.setInterval(flush, FLUSH_INTERVAL_MS);
+    return function () {
+      window.clearInterval(id);
+      // Финальный flush при размонтировании
+      flush();
+    };
+  }, [flush]);
+
+  const addLog = useCallback(
+    function (type: LogType, message: string, details?: string) {
+      const entry: LogEntry = {
+        id: generateId('log'),
+        time: formatTime(),
+        type: type,
+        message: message,
+        details: details,
+      };
+      bufferRef.current.push(entry);
+
+      // ⚡ Если буфер переполнен — принудительный flush
+      if (bufferRef.current.length >= FLUSH_THRESHOLD) {
+        if (flushTimerRef.current !== null) {
+          window.clearTimeout(flushTimerRef.current);
+          flushTimerRef.current = null;
+        }
+        flush();
+      }
+    },
+    [flush]
+  );
+
   const clearLogs = useCallback(function () {
+    bufferRef.current = [];
     setLogs([]);
   }, []);
 
   const exportLogs = useCallback(
     async function () {
-      if (logs.length === 0) {
+      // Сначала сливаем буфер, чтобы попали последние записи
+      flush();
+
+      // В exportLogs мы можем не увидеть свежий state сразу,
+      // но addLog в bufferRef уже даст все записи.
+      // Берём из logs + buffer.
+      const allLogs = bufferRef.current.concat(logs);
+      if (allLogs.length === 0) {
         alert('Журнал пуст — нечего экспортировать.');
         return;
       }
 
-      const text = logs
+      const text = allLogs
         .slice()
         .reverse()
         .map(function (l) {
@@ -116,8 +160,8 @@ export function useLogger(): UseLoggerResult {
         }
       }
     },
-    [logs]
+    [logs, flush]
   );
 
-  return { logs, addLog, clearLogs, exportLogs };
+  return { logs, addLog, clearLogs, exportLogs, flush };
 }

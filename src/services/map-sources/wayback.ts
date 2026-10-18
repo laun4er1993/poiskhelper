@@ -74,6 +74,11 @@ export function getWaybackReleases(): WaybackRelease[] {
   if (cached && cached.releases.length > 0) {
     return cached.releases;
   }
+  // ⚡ N17: хардкод ESRI_WAYBACK_RELEASES устаревает.
+  //   Используется как «первичный» список до фетча. Как только
+  //   useWaybackReleases.fetchWaybackReleases() вернёт актуальный
+  //   список — он сохранится в кэш и перекроет хардкод.
+  //   TODO: при старте приложения вызывать фоновый fetch один раз.
   return ESRI_WAYBACK_RELEASES.slice();
 }
 
@@ -157,10 +162,15 @@ export interface FetchResult {
   latest: WaybackRelease | null;
 }
 
-export async function fetchWaybackReleases(): Promise<FetchResult> {
+export async function fetchWaybackReleases(
+  signal?: AbortSignal
+): Promise<FetchResult> {
+  // ⚡ N18: поддержка отмены — если компонент размонтирован или
+  //   пользователь закрыл панель, fetch прерывается.
   const response = await fetch(WAYBACK_CONFIG_URL, {
     method: 'GET',
     headers: { Accept: 'application/json' },
+    signal: signal,
   });
 
   if (!response.ok) {
@@ -170,6 +180,11 @@ export async function fetchWaybackReleases(): Promise<FetchResult> {
   }
 
   const json = await response.json();
+
+  if (signal && signal.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
+
   const releases = parseWaybackResponse(json);
 
   if (releases.length === 0) {

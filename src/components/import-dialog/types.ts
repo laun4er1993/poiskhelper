@@ -1,6 +1,6 @@
 // =====================================================
 // src/components/import-dialog/types.ts
-// Типы для диалога импорта
+// Типы для диалога импорта KML/KMZ
 // =====================================================
 
 export interface ImportOptions {
@@ -10,16 +10,28 @@ export interface ImportOptions {
   flyToBounds: boolean;
   showLabels: boolean;
   showHidden: boolean;
-  /** Импортировать LineString как MeasureItem */
   importLinesAsMeasures?: boolean;
-  /** Тип линейки по умолчанию для импортированных линий */
-  defaultRulerType?: 'path' | 'area' | 'profile';
+  defaultRulerType?: 'path' | 'area';
+  /** ⚡ Свернуть папки после импорта */
+  startCollapsed?: boolean;
+}
+
+/**
+ * Опциональные дефолты из настроек приложения
+ * (settings.importDefaults).
+ */
+export interface ImportDefaults {
+  visible?: boolean;
+  startCollapsed?: boolean;
+  color?: string;
+  pixelSize?: number;
 }
 
 export interface ImportDialogProps {
   fileName: string;
   objectCount: number;
   sizeBytes?: number;
+  defaults?: ImportDefaults;
   onConfirm: (options: ImportOptions) => void;
   onCancel: () => void;
 }

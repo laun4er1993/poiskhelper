@@ -1,6 +1,6 @@
 // =====================================================
 // src/App.tsx
-// Корневой компонент
+// Корневой компонент — поиск мест через GeocodeResult
 // =====================================================
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
@@ -66,6 +66,10 @@ import {
   pickProjectSavePath,
   normalizeProjectMeta,
 } from './services/project';
+import {
+  searchPlaces,
+  type GeocodeResult,
+} from './services/geocoding';
 import { copyTextToClipboard } from './utils/clipboard';
 
 const LOGS_PANEL_KEY = 'poiskhelper_logs_panel_v1';
@@ -99,7 +103,6 @@ function App() {
   const [statusBarData, setStatusBarData] =
     useState<StatusBarData>(DEFAULT_STATUS_BAR);
 
-  // ⚡ Диалог кастомных карт
   const [customDialogVisible, setCustomDialogVisible] = useState(false);
   const [editingCustomSource, setEditingCustomSource] =
     useState<CustomMapSource | null>(null);
@@ -109,14 +112,6 @@ function App() {
   const exitInProgressRef = useRef(false);
   const autoSaveWarnedRef = useRef(false);
 
-  const uiWithConstants = useMemo(
-    function () {
-      return ui;
-    },
-    [ui]
-  );
-
-  // ⚡ Эффективные настройки карты (meta.project override + settings)
   const effectiveMapSource: MapSourceSettings = useMemo(
     function () {
       return {
@@ -147,7 +142,7 @@ function App() {
 
   const projectOps = useProjectOps({
     project,
-    ui: uiWithConstants,
+    ui,
     logger,
     settings,
     colors,
@@ -176,6 +171,15 @@ function App() {
 
   useEffect(
     function () {
+      measure.clearAll();
+      ui.setSelectedMeasureIndex(null);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [project.currentProjectPath]
+  );
+
+  useEffect(
+    function () {
       if (!project.autoSaveWarning) return;
       if (autoSaveWarnedRef.current) return;
       autoSaveWarnedRef.current = true;
@@ -196,10 +200,8 @@ function App() {
     [project.autoSaveWarning, ui, logger]
   );
 
-  // ⚡ Изменение настроек карты
   const handleMapSourceChange = useCallback(
     function (updater: Partial<MapSourceSettings>) {
-      // Если у проекта есть override — пишем в meta
       if (project.meta.mapSource) {
         project.setMeta(function (prev) {
           const nextMeta = {
@@ -210,12 +212,10 @@ function App() {
             },
             updatedAt: new Date().toISOString(),
           };
-          // Если меняется baseLayer — синхронизируем в settings тоже
           return nextMeta;
         });
         project.markDirty();
       } else {
-        // Глобальные настройки
         updateSettings({
           mapSource: { ...settings.mapSource, ...updater },
         });
@@ -224,7 +224,6 @@ function App() {
     [project, settings.mapSource, updateSettings]
   );
 
-  // ⚡ Открыть диалог кастомных карт
   const handleNeedCustomDialog = useCallback(
     function (edit?: CustomMapSource | null) {
       setEditingCustomSource(edit || null);
@@ -233,17 +232,20 @@ function App() {
     []
   );
 
-  // ⚡ Сохранение кастомной карты
   const handleSaveCustomSource = useCallback(
     function (source: Omit<CustomMapSource, 'id' | 'addedAt'>) {
       const currentCustom = settings.mapSource.customSources || [];
       const newSource: CustomMapSource = {
         ...source,
         id:
-          editingCustomSource && editingCustomSource.id &&
+          editingCustomSource &&
+          editingCustomSource.id &&
           editingCustomSource.id !== '__import_xml__'
             ? editingCustomSource.id
-            : 'custom-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+            : 'custom-' +
+              Date.now() +
+              '-' +
+              Math.random().toString(36).slice(2, 8),
         addedAt:
           (editingCustomSource && editingCustomSource.addedAt) ||
           new Date().toISOString(),
@@ -276,14 +278,12 @@ function App() {
     [settings.mapSource, updateSettings, editingCustomSource, logger]
   );
 
-  // ⚡ Импорт XML
   const handleImportCustomXml = useCallback(
     function (xml: string) {
       try {
         const parser = new DOMParser();
         const doc = parser.parseFromString(xml, 'application/xml');
 
-        // Парсим по нескольким возможным форматам
         const providers = doc.getElementsByTagName('provider');
         const imported: CustomMapSource[] = [];
 
@@ -305,6 +305,7 @@ function App() {
 
           if (!name || !url) continue;
           url = url.replace(/\s+/g, '');
+          url = url.replace(/\{ts\}/g, '');
 
           imported.push({
             id:
@@ -351,7 +352,6 @@ function App() {
     [settings.mapSource, updateSettings, logger]
   );
 
-  // ⚡ Удаление кастомной карты
   const handleDeleteCustom = useCallback(
     function (id: string) {
       const currentCustom = settings.mapSource.customSources || [];
@@ -408,6 +408,9 @@ function App() {
         buildingsTilesetRef.current = null;
         ui.setShow3DBuildings(false);
         logger.addLog('visibility', '3D-здания выключены');
+        try {
+          viewer.scene.requestRender();
+        } catch (e) {}
         return;
       }
       ui.setBuildingsLoading(true);
@@ -429,6 +432,9 @@ function App() {
             },
           });
           logger.addLog('visibility', '3D-здания включены');
+          try {
+            viewer.scene.requestRender();
+          } catch (e) {}
         }
       } catch (err) {
         console.error('3D-здания:', err);
@@ -900,19 +906,6 @@ function App() {
     [ui, logger]
   );
 
-  const treeWithPreview = useMemo(
-    function () {
-      return applyPreview(project.tree, ui.previewOverrides);
-    },
-    [project.tree, ui.previewOverrides]
-  );
-  const importedWithPreview = useMemo(
-    function () {
-      return applyPreview(project.importedItems, ui.previewOverrides);
-    },
-    [project.importedItems, ui.previewOverrides]
-  );
-
   const placesCount = useMemo(
     function () {
       let n = 0;
@@ -925,10 +918,10 @@ function App() {
           else if (isContainer(it)) walk(it.children, visible);
         });
       }
-      walk(treeWithPreview, true);
+      walk(project.tree, true);
       return n;
     },
-    [treeWithPreview]
+    [project.tree]
   );
 
   const projectStats = useMemo(
@@ -943,15 +936,41 @@ function App() {
       ? ui.selectedIds[ui.selectedIds.length - 1]
       : null;
 
-  const selectedItem = selectedId
-    ? findItem(treeWithPreview, selectedId) ||
-      findItem(importedWithPreview, selectedId)
-    : null;
+  const selectedItem = useMemo(
+    function () {
+      if (!selectedId) return null;
+      const base =
+        findItem(project.tree, selectedId) ||
+        findItem(project.importedItems, selectedId);
+      if (!base) return null;
+      const patch = ui.previewOverrides[selectedId];
+      return patch ? ({ ...base, ...patch } as TreeItem) : base;
+    },
+    [
+      project.tree,
+      project.importedItems,
+      selectedId,
+      ui.previewOverrides,
+    ]
+  );
 
-  const panelItem = ui.panelItemId
-    ? findItem(treeWithPreview, ui.panelItemId) ||
-      findItem(importedWithPreview, ui.panelItemId)
-    : null;
+  const panelItem = useMemo(
+    function () {
+      if (!ui.panelItemId) return null;
+      const base =
+        findItem(project.tree, ui.panelItemId) ||
+        findItem(project.importedItems, ui.panelItemId);
+      if (!base) return null;
+      const patch = ui.previewOverrides[ui.panelItemId];
+      return patch ? ({ ...base, ...patch } as TreeItem) : base;
+    },
+    [
+      project.tree,
+      project.importedItems,
+      ui.panelItemId,
+      ui.previewOverrides,
+    ]
+  );
 
   const hasPreviewForPanel = ui.panelItemId
     ? !!ui.previewOverrides[ui.panelItemId]
@@ -961,6 +980,274 @@ function App() {
     ? findItem(project.tree, ui.infoDialogId) ||
       findItem(project.importedItems, ui.infoDialogId)
     : null;
+
+  // =====================================================
+  // Поиск мест — выбор конкретного результата
+  // =====================================================
+  const handleSelectGeocodeResult = useCallback(
+    function (result: GeocodeResult) {
+      const viewer = viewerRef.current;
+      if (!viewer || viewer.isDestroyed()) return;
+
+      // Полёт к найденному месту
+      try {
+        if (result.bbox) {
+          const west = result.bbox[0];
+          const south = result.bbox[1];
+          const east = result.bbox[2];
+          const north = result.bbox[3];
+
+          const centerLon = (west + east) / 2;
+          const centerLat = (south + north) / 2;
+          const latDelta = Math.max(0.001, north - south);
+          const lonDelta = Math.max(0.001, east - west);
+          const maxDelta = Math.max(latDelta, lonDelta);
+          const height = Math.max(500, maxDelta * 111000 * 2);
+
+          viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(
+              centerLon,
+              centerLat,
+              height
+            ),
+            duration: 1.5,
+          });
+        } else {
+          viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(
+              result.lon,
+              result.lat,
+              5000
+            ),
+            duration: 1.5,
+          });
+        }
+      } catch (e) {}
+
+      // Создаём метку в активной папке
+      const newPlace: Place = {
+        id: generateId(),
+        name: result.displayName,
+        type: 'place',
+        visible: true,
+        lat: result.lat,
+        lon: result.lon,
+        height: result.height || 0,
+        color: colors.markerDefault,
+        pixelSize: 6,
+        description: '',
+        altitudeMode: 'clampToGround',
+        createdAt: new Date().toISOString(),
+      };
+
+      project.setTree(function (prev) {
+        return addItemToFolder(prev, ui.activeFolderId, newPlace);
+      });
+      ui.setSelectedIds([newPlace.id]);
+      ui.setLastClickedId(newPlace.id);
+
+      const sourceLabel =
+        result.source === 'coordinate'
+          ? 'координаты'
+          : result.source === 'cesium'
+          ? 'Cesium Ion'
+          : 'OpenStreetMap';
+      logger.addLog(
+        'add',
+        'Найдено: ' + result.displayName,
+        'Источник: ' + sourceLabel
+      );
+      project.markDirty();
+
+      if (!result.height || Math.abs(result.height) < 0.001) {
+        ensureHeightForPlace(newPlace.id, newPlace.lat, newPlace.lon, 0);
+      }
+    },
+    [
+      ui,
+      project,
+      logger,
+      colors.markerDefault,
+      ensureHeightForPlace,
+    ]
+  );
+
+  // =====================================================
+  // Поиск — fallback по Enter без выбора в dropdown
+  // =====================================================
+  const handleSidebarSearch = useCallback(
+    async function (query: string) {
+      const trimmed = (query || '').trim();
+      if (!trimmed) return;
+
+      const viewer = viewerRef.current;
+
+      ui.setLoading({
+        visible: true,
+        message: 'Поиск',
+        subMessage: trimmed,
+        kind: 'spinner',
+      });
+
+      try {
+        const results = await searchPlaces(trimmed, {
+          viewer: viewer || undefined,
+        });
+
+        if (results.length === 0) {
+          logger.addLog(
+            'update',
+            'Поиск: ничего не найдено — "' + trimmed + '"'
+          );
+          return;
+        }
+
+        // Первый результат — flyTo + создание метки
+        handleSelectGeocodeResult(results[0]);
+
+        logger.addLog(
+          'update',
+          'Поиск: ' +
+            results.length +
+            ' результат(ов) — выбран первый'
+        );
+      } catch (error) {
+        console.warn('handleSidebarSearch:', error);
+        logger.addLog('update', 'Ошибка поиска: "' + trimmed + '"');
+      } finally {
+        ui.setLoading(ui.DEFAULT_LOADING);
+      }
+    },
+    [ui, logger, handleSelectGeocodeResult]
+  );
+
+  const handleSidebarWidthChange = useCallback(
+    function (w: number) {
+      updateSettings({ sidebarWidth: w });
+    },
+    [updateSettings]
+  );
+
+  const handleSidebarSelect = useCallback(
+    function (id: string, mode: SelectMode) {
+      ui.setSelectedMeasureIndex(null);
+      if (id === '') {
+        ui.setSelectedIds([]);
+        ui.setLastClickedId(null);
+        return;
+      }
+      if (mode === 'single') {
+        ui.setSelectedIds([id]);
+        ui.setLastClickedId(id);
+      } else if (mode === 'toggle') {
+        ui.setSelectedIds(function (prev) {
+          const idx = prev.indexOf(id);
+          if (idx >= 0) {
+            const next = prev.slice();
+            next.splice(idx, 1);
+            return next;
+          }
+          return prev.concat([id]);
+        });
+        ui.setLastClickedId(id);
+      } else if (mode === 'range') {
+        const allIds = flattenIds(project.tree);
+        const startIdx = ui.lastClickedId
+          ? allIds.indexOf(ui.lastClickedId)
+          : -1;
+        const endIdx = allIds.indexOf(id);
+        if (startIdx < 0 || endIdx < 0) {
+          ui.setSelectedIds([id]);
+          ui.setLastClickedId(id);
+          return;
+        }
+        const from = Math.min(startIdx, endIdx);
+        const to = Math.max(startIdx, endIdx);
+        ui.setSelectedIds(allIds.slice(from, to + 1));
+      }
+    },
+    [ui, project.tree]
+  );
+
+  const handleSidebarAddPlace = useCallback(
+    function (parentId: string) {
+      const viewer = viewerRef.current;
+      if (!viewer) return;
+      const carto = viewer.camera.positionCartographic;
+      const lat = Cesium.Math.toDegrees(carto.latitude);
+      const lon = Cesium.Math.toDegrees(carto.longitude);
+      const h = carto.height;
+      const newId = treeOps.handleAddPlaceTo(parentId, lat, lon, h);
+      if (!h || Math.abs(h) < 0.001) {
+        ensureHeightForPlace(newId, lat, lon, 0);
+      }
+    },
+    [treeOps, ensureHeightForPlace]
+  );
+
+  const handleSidebarMoveRequest = useCallback(
+    function (ids: string[]) {
+      if (ids.length === 0) return;
+      ui.setMoveDialogIds(ids);
+    },
+    [ui]
+  );
+
+  const handleSidebarShowInfo = useCallback(
+    function (id: string) {
+      ui.setInfoDialogId(id);
+    },
+    [ui]
+  );
+
+  const handleSidebarOpenLogs = useCallback(
+    function () {
+      ui.setShowLogsPanel(function (v: boolean) {
+        return !v;
+      });
+    },
+    [ui]
+  );
+
+  const handleSidebarMoveAllImported = useCallback(
+    function () {
+      if (project.importedItems.length === 0) return;
+      ui.setConfirmDialog({
+        visible: true,
+        title: 'Перенос объектов',
+        message:
+          'Перенести все добавленные (' +
+          project.importedItems.length +
+          ') в «Мои объекты»?',
+        okLabel: 'Перенести',
+        cancelLabel: 'Отмена',
+        danger: false,
+        onConfirm: function () {
+          const items = project.importedItems.slice();
+          project.setTree(function (prev) {
+            let next = prev;
+            items.forEach(function (it) {
+              next = addItemToFolder(next, 'root-folder', it);
+            });
+            return next;
+          });
+          project.setImportedItems([]);
+          logger.addLog('move', 'Перенесено: ' + items.length);
+          project.markDirty();
+          ui.setConfirmDialog(ui.DEFAULT_CONFIRM);
+        },
+      });
+    },
+    [ui, project, logger]
+  );
+
+  const handleSidebarDeleteMultiple = useCallback(
+    function (ids: string[]) {
+      handleConfirmDeleteMultiple(ids);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ui, treeOps]
+  );
 
   useKeyboardShortcuts({
     onSave: projectOps.handleSaveProject,
@@ -1247,8 +1534,8 @@ function App() {
 
         <div style={styles.main}>
           <Sidebar
-            tree={treeWithPreview}
-            importedItems={importedWithPreview}
+            tree={project.tree}
+            importedItems={project.importedItems}
             selectedIds={ui.selectedIds}
             lastClickedId={ui.lastClickedId}
             focusedId={ui.focusedId}
@@ -1262,126 +1549,21 @@ function App() {
             showBreadcrumbs={settings.showBreadcrumbs}
             design={settings.design}
             settings={settings}
-            onWidthChange={function (w) {
-              updateSettings({ sidebarWidth: w });
-            }}
-            onSearch={async function (query: string) {
-              const viewer = viewerRef.current;
-              if (!viewer) return;
-              ui.setLoading({
-                visible: true,
-                message: 'Поиск',
-                subMessage: query,
-                kind: 'spinner',
-              });
-              try {
-                const geocoder = new Cesium.IonGeocoderService({
-                  scene: viewer.scene,
-                });
-                const results = await geocoder.geocode(query);
-                if (results.length === 0) {
-                  alert('Ничего не найдено.');
-                  return;
-                }
-                viewer.camera.flyTo({
-                  destination: results[0].destination,
-                  duration: 2,
-                });
-                const carto = Cesium.Cartographic.fromCartesian(
-                  results[0].destination as Cesium.Cartesian3
-                );
-                const newPlace: Place = {
-                  id: generateId(),
-                  name: results[0].displayName || query,
-                  type: 'place',
-                  visible: true,
-                  lat: Cesium.Math.toDegrees(carto.latitude),
-                  lon: Cesium.Math.toDegrees(carto.longitude),
-                  color: colors.markerDefault,
-                  pixelSize: 6,
-                  description: '',
-                  height: 0,
-                  altitudeMode: 'clampToGround',
-                  createdAt: new Date().toISOString(),
-                };
-                project.setTree(function (prev) {
-                  return addItemToFolder(prev, ui.activeFolderId, newPlace);
-                });
-                ui.setSelectedIds([newPlace.id]);
-                logger.addLog('add', 'Найдено: ' + newPlace.name);
-                project.markDirty();
-                ensureHeightForPlace(
-                  newPlace.id,
-                  newPlace.lat,
-                  newPlace.lon,
-                  0
-                );
-              } catch (error) {
-                alert('Ошибка поиска.');
-              } finally {
-                ui.setLoading(ui.DEFAULT_LOADING);
-              }
-            }}
-            onSelect={function (id: string, mode: SelectMode) {
-              ui.setSelectedMeasureIndex(null);
-              if (id === '') {
-                ui.setSelectedIds([]);
-                ui.setLastClickedId(null);
-                return;
-              }
-              if (mode === 'single') {
-                ui.setSelectedIds([id]);
-                ui.setLastClickedId(id);
-              } else if (mode === 'toggle') {
-                ui.setSelectedIds(function (prev) {
-                  const idx = prev.indexOf(id);
-                  if (idx >= 0) {
-                    const next = prev.slice();
-                    next.splice(idx, 1);
-                    return next;
-                  }
-                  return prev.concat([id]);
-                });
-                ui.setLastClickedId(id);
-              } else if (mode === 'range') {
-                const allIds = flattenIds(project.tree);
-                const startIdx = ui.lastClickedId
-                  ? allIds.indexOf(ui.lastClickedId)
-                  : -1;
-                const endIdx = allIds.indexOf(id);
-                if (startIdx < 0 || endIdx < 0) {
-                  ui.setSelectedIds([id]);
-                  ui.setLastClickedId(id);
-                  return;
-                }
-                const from = Math.min(startIdx, endIdx);
-                const to = Math.max(startIdx, endIdx);
-                ui.setSelectedIds(allIds.slice(from, to + 1));
-              }
-            }}
+            onWidthChange={handleSidebarWidthChange}
+            onSearch={handleSidebarSearch}
+            onSelectGeocodeResult={handleSelectGeocodeResult}
+            viewerRef={viewerRef}
+            onSelect={handleSidebarSelect}
             onToggleVisible={treeOps.handleToggleVisible}
             onSetVisibleCascade={treeOps.handleSetVisibleCascade}
             onToggleExpanded={treeOps.handleToggleExpanded}
             onSetExpandedDeep={treeOps.handleSetExpandedDeep}
             onRename={treeOps.handleRename}
             onDelete={treeOps.handleDelete}
-            onDeleteMultiple={function (ids: string[]) {
-              handleConfirmDeleteMultiple(ids);
-            }}
+            onDeleteMultiple={handleSidebarDeleteMultiple}
             onToggleVisibleMultiple={treeOps.handleToggleVisibleMultiple}
             onAddFolder={treeOps.handleAddFolder}
-            onAddPlace={function (parentId: string) {
-              const viewer = viewerRef.current;
-              if (!viewer) return;
-              const carto = viewer.camera.positionCartographic;
-              const lat = Cesium.Math.toDegrees(carto.latitude);
-              const lon = Cesium.Math.toDegrees(carto.longitude);
-              const h = carto.height;
-              const newId = treeOps.handleAddPlaceTo(parentId, lat, lon, h);
-              if (!h || Math.abs(h) < 0.001) {
-                ensureHeightForPlace(newId, lat, lon, 0);
-              }
-            }}
+            onAddPlace={handleSidebarAddPlace}
             onFlyTo={handleFlyTo}
             onImport={projectOps.handleImport}
             onExport={projectOps.handleExportSelected}
@@ -1390,54 +1572,18 @@ function App() {
             onCut={treeOps.handleCut}
             onPaste={treeOps.handlePaste}
             onDuplicate={treeOps.handleDuplicateMultiple}
-            onMoveRequest={function (ids: string[]) {
-              if (ids.length === 0) return;
-              ui.setMoveDialogIds(ids);
-            }}
+            onMoveRequest={handleSidebarMoveRequest}
             onMoveItem={treeOps.handleMoveItemDragDrop}
             onMoveUpDown={treeOps.handleMoveUpDown}
             onSortChange={treeOps.handleSortChange}
             onTogglePin={treeOps.handleTogglePin}
-            onShowInfo={function (id: string) {
-              ui.setInfoDialogId(id);
-            }}
+            onShowInfo={handleSidebarShowInfo}
             onCopyCoords={handleCopyCoords}
-            onOpenLogs={function () {
-              ui.setShowLogsPanel(function (v: boolean) {
-                return !v;
-              });
-            }}
+            onOpenLogs={handleSidebarOpenLogs}
             onOpenProjectDetails={handleOpenProjectDetails}
             onNavigateToFolder={handleNavigateToFolder}
             logsCount={logger.logs.length}
-            onMoveAllImported={function () {
-              if (project.importedItems.length === 0) return;
-              ui.setConfirmDialog({
-                visible: true,
-                title: 'Перенос объектов',
-                message:
-                  'Перенести все добавленные (' +
-                  project.importedItems.length +
-                  ') в «Мои объекты»?',
-                okLabel: 'Перенести',
-                cancelLabel: 'Отмена',
-                danger: false,
-                onConfirm: function () {
-                  const items = project.importedItems.slice();
-                  project.setTree(function (prev) {
-                    let next = prev;
-                    items.forEach(function (it) {
-                      next = addItemToFolder(next, 'root-folder', it);
-                    });
-                    return next;
-                  });
-                  project.setImportedItems([]);
-                  logger.addLog('move', 'Перенесено: ' + items.length);
-                  project.markDirty();
-                  ui.setConfirmDialog(ui.DEFAULT_CONFIRM);
-                },
-              });
-            }}
+            onMoveAllImported={handleSidebarMoveAllImported}
             onCollapseAll={treeOps.handleCollapseAll}
             onToggleSidebarOrder={handleToggleSidebarOrder}
             onEditItem={handleEditItem}
@@ -1445,8 +1591,9 @@ function App() {
 
           <div style={styles.globeContainer}>
             <GlobeViewer
-              items={treeWithPreview}
-              importedItems={importedWithPreview}
+              items={project.tree}
+              importedItems={project.importedItems}
+              previewOverrides={ui.previewOverrides}
               clickMode={ui.clickMode}
               settings={settings}
               colors={colors}
@@ -1586,7 +1733,6 @@ function App() {
           />
         )}
 
-        {/* ⚡ Диалог кастомных карт */}
         {customDialogVisible && (
           <CustomMapSourceDialog
             visible={customDialogVisible}
@@ -1626,6 +1772,11 @@ function App() {
             fileName={ui.pendingImport.fileName}
             objectCount={ui.pendingImport.objectCount}
             sizeBytes={ui.pendingImport.sizeBytes}
+            defaults={{
+              visible: !settings.importDefaults.startHidden,
+              startCollapsed: settings.importDefaults.startCollapsed,
+              color: colors.markerDefault,
+            }}
             onConfirm={projectOps.handleImportConfirm}
             onCancel={function () {
               ui.setPendingImport(null);
@@ -1710,36 +1861,6 @@ function App() {
   );
 }
 
-// =====================================================
-// applyPreview
-// =====================================================
-function applyPreview(
-  items: TreeItem[],
-  overrides: Record<string, Partial<any>>
-): TreeItem[] {
-  const keys = Object.keys(overrides);
-  if (keys.length === 0) return items;
-  function walk(list: TreeItem[]): TreeItem[] {
-    return list.map(function (item) {
-      if (!item) return item;
-      const patch = overrides[item.id];
-      let next: TreeItem = item;
-      if (patch) next = { ...item, ...patch } as TreeItem;
-      if (isContainer(next)) {
-        const newChildren = walk(next.children);
-        if (newChildren !== next.children) {
-          next = { ...next, children: newChildren } as TreeItem;
-        }
-      }
-      return next;
-    });
-  }
-  return walk(items);
-}
-
-// =====================================================
-// Сбор координат
-// =====================================================
 function collectGeoPoints(
   item: TreeItem
 ): Array<{ lat: number; lon: number; height?: number }> {

@@ -6,15 +6,7 @@
 import type { ProjectMeta } from '../../types/project';
 import { createDefaultProjectMeta } from '../../types/project';
 import type { MapSourceSettings } from '../../types/map-sources';
-// ⚡ BUILT_IN_MAP_SOURCES (переименовано из MAP_SOURCES)
-import { BUILT_IN_MAP_SOURCES } from '../../types/map-sources';
-
-function isBuiltInMapSource(id: any): boolean {
-  if (typeof id !== 'string') return false;
-  return BUILT_IN_MAP_SOURCES.some(function (b) {
-    return b.id === id;
-  });
-}
+import { readOverlaySettings } from '../../types/overlay-sources';
 
 function normalizeMapSource(
   raw: any
@@ -22,9 +14,6 @@ function normalizeMapSource(
   if (!raw || typeof raw !== 'object') return undefined;
   const result: Partial<MapSourceSettings> = {};
 
-  // ⚡ Принимаем любой непустой ID — это может быть как встроенный,
-  // так и кастомный источник. Если ID неизвестен — useBaseLayer
-  // откатится на Esri.
   if (typeof raw.baseLayer === 'string' && raw.baseLayer.trim()) {
     result.baseLayer = raw.baseLayer.trim();
   }
@@ -59,6 +48,9 @@ function normalizeMapSource(
       Math.min(1.5, raw.baseLayerContrast)
     );
   }
+
+  // ⚡ N1: overlays (дороги/контуры/названия) должны пережить сохранение
+  result.overlays = readOverlaySettings(raw.overlays);
 
   // Кастомные источники
   if (Array.isArray(raw.customSources)) {
@@ -251,6 +243,3 @@ export function sanitizeFileName(name: string): string {
     .trim()
     .slice(0, 80);
 }
-
-// Подавляем unused warning — утилита оставлена для будущего использования
-void isBuiltInMapSource;

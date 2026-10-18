@@ -1,6 +1,8 @@
 // =====================================================
 // src/services/kml/exporter.ts
 // Экспорт дерева объектов в KML/KMZ
+// Исправлено: altitudeMode параметром, chunks[] вместо +=",
+// measureToKml пишет clampToGround если высот нет.
 // =====================================================
 
 import JSZip from 'jszip';
@@ -10,6 +12,7 @@ import type {
   KmlLine,
   KmlPolygon,
   MeasureItem,
+  AltitudeMode,
 } from '../../types/base';
 import {
   isPlace,
@@ -19,9 +22,9 @@ import {
   isContainer,
 } from '../../types/base';
 
-// =====================================================
-// === Утилиты ===
-// =====================================================
+// -----------------------------------------------------
+// Утилиты
+// -----------------------------------------------------
 function escapeXml(s: string): string {
   return String(s || '')
     .replace(/&/g, '&amp;')
@@ -51,134 +54,179 @@ function cssColorToKml(css: string, alpha: number): string {
   return aa + b + g + r;
 }
 
-// =====================================================
-// === Place → KML ===
-// =====================================================
-function placeToKml(place: Place, indent: string): string {
-  let kml = indent + '<Placemark>\n';
-  kml += indent + '  <name>' + escapeXml(place.name) + '</name>\n';
+/**
+ * ⚡ N5/N6: KML altitudeMode. Возвращает строку, которая
+ * пойдёт в <altitudeMode>...</altitudeMode>.
+ * - 'absolute' → absolute (прилипает к высоте над эллипсоидом)
+ * - 'clampToGround' → clampToGround (прилипает к рельефу)
+ * - 'relativeToGround' → relativeToGround
+ */
+function altitudeModeToKml(mode: AltitudeMode | undefined): string {
+  if (mode === 'absolute') return 'absolute';
+  if (mode === 'relativeToGround') return 'relativeToGround';
+  return 'clampToGround';
+}
+
+// -----------------------------------------------------
+// Place → KML
+// -----------------------------------------------------
+function placeToKml(place: Place, indent: string, out: string[]): void {
+  out.push(indent + '<Placemark>\n');
+  out.push(indent + '  <name>' + escapeXml(place.name) + '</name>\n');
   if (place.description) {
-    kml +=
+    out.push(
       indent +
-      '  <description><![CDATA[' +
-      place.description +
-      ']]></description>\n';
+        '  <description><![CDATA[' +
+        place.description +
+        ']]></description>\n'
+    );
   }
   const scale = ((place.pixelSize || 12) / 12).toFixed(2);
   const color = cssColorToKml(place.color || '#e74c3c', 1);
-  kml += indent + '  <Style>\n';
-  kml += indent + '    <IconStyle>\n';
-  kml += indent + '      <color>' + color + '</color>\n';
-  kml += indent + '      <scale>' + scale + '</scale>\n';
-  kml += indent + '      <Icon>\n';
+  out.push(indent + '  <Style>\n');
+  out.push(indent + '    <IconStyle>\n');
+  out.push(indent + '      <color>' + color + '</color>\n');
+  out.push(indent + '      <scale>' + scale + '</scale>\n');
+  out.push(indent + '      <Icon>\n');
   if (place.iconHref) {
-    kml +=
+    out.push(
       indent +
-      '        <href>' +
-      escapeXml(place.iconHref) +
-      '</href>\n';
+        '        <href>' +
+        escapeXml(place.iconHref) +
+        '</href>\n'
+    );
   } else {
-    kml +=
+    out.push(
       indent +
-      '        <href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href>\n';
+        '        <href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href>\n'
+    );
   }
-  kml += indent + '      </Icon>\n';
-  kml += indent + '    </IconStyle>\n';
-  kml += indent + '  </Style>\n';
-  kml += indent + '  <Point>\n';
-  kml +=
+  out.push(indent + '      </Icon>\n');
+  out.push(indent + '    </IconStyle>\n');
+  out.push(indent + '  </Style>\n');
+  out.push(indent + '  <Point>\n');
+
+  const altitudeMode = altitudeModeToKml(place.altitudeMode);
+  // absolute / relativeToGround — пишем altitudeMode
+  if (altitudeMode !== 'clampToGround') {
+    out.push(
+      indent + '    <altitudeMode>' + altitudeMode + '</altitudeMode>\n'
+    );
+  }
+
+  out.push(
     indent +
-    '    <coordinates>' +
-    place.lon.toFixed(8) +
-    ',' +
-    place.lat.toFixed(8) +
-    ',' +
-    (place.height || 0).toFixed(2) +
-    '</coordinates>\n';
-  kml += indent + '  </Point>\n';
-  kml += indent + '</Placemark>\n';
-  return kml;
+      '    <coordinates>' +
+      place.lon.toFixed(8) +
+      ',' +
+      place.lat.toFixed(8) +
+      ',' +
+      (place.height || 0).toFixed(2) +
+      '</coordinates>\n'
+  );
+  out.push(indent + '  </Point>\n');
+  out.push(indent + '</Placemark>\n');
 }
 
-// =====================================================
-// === LineString → KML ===
-// =====================================================
-function lineToKml(line: KmlLine, indent: string): string {
-  let kml = indent + '<Placemark>\n';
-  kml += indent + '  <name>' + escapeXml(line.name) + '</name>\n';
+// -----------------------------------------------------
+// LineString → KML
+// -----------------------------------------------------
+function lineToKml(line: KmlLine, indent: string, out: string[]): void {
+  out.push(indent + '<Placemark>\n');
+  out.push(indent + '  <name>' + escapeXml(line.name) + '</name>\n');
   if (line.description) {
-    kml +=
+    out.push(
       indent +
-      '  <description><![CDATA[' +
-      line.description +
-      ']]></description>\n';
+        '  <description><![CDATA[' +
+        line.description +
+        ']]></description>\n'
+    );
   }
   const color = cssColorToKml(line.color || '#f1c40f', 1);
-  kml += indent + '  <Style>\n';
-  kml += indent + '    <LineStyle>\n';
-  kml += indent + '      <color>' + color + '</color>\n';
-  kml += indent + '      <width>' + (line.width || 3) + '</width>\n';
-  kml += indent + '    </LineStyle>\n';
-  kml += indent + '  </Style>\n';
-  kml += indent + '  <LineString>\n';
-  kml += indent + '    <tessellate>1</tessellate>\n';
-  kml += indent + '    <coordinates>\n';
+  out.push(indent + '  <Style>\n');
+  out.push(indent + '    <LineStyle>\n');
+  out.push(indent + '      <color>' + color + '</color>\n');
+  out.push(indent + '      <width>' + (line.width || 3) + '</width>\n');
+  out.push(indent + '    </LineStyle>\n');
+  out.push(indent + '  </Style>\n');
+  out.push(indent + '  <LineString>\n');
+  out.push(indent + '    <tessellate>1</tessellate>\n');
+
+  // ⚡ N5: altitudeMode линии
+  const altitudeMode = altitudeModeToKml(line.altitudeMode);
+  if (altitudeMode !== 'clampToGround') {
+    out.push(
+      indent + '    <altitudeMode>' + altitudeMode + '</altitudeMode>\n'
+    );
+  }
+
+  out.push(indent + '    <coordinates>\n');
   line.positions.forEach(function (p) {
-    kml +=
+    out.push(
       indent +
-      '      ' +
-      p.lon.toFixed(8) +
-      ',' +
-      p.lat.toFixed(8) +
-      ',' +
-      (p.height || 0).toFixed(2) +
-      '\n';
+        '      ' +
+        p.lon.toFixed(8) +
+        ',' +
+        p.lat.toFixed(8) +
+        ',' +
+        (p.height || 0).toFixed(2) +
+        '\n'
+    );
   });
-  kml += indent + '    </coordinates>\n';
-  kml += indent + '  </LineString>\n';
-  kml += indent + '</Placemark>\n';
-  return kml;
+  out.push(indent + '    </coordinates>\n');
+  out.push(indent + '  </LineString>\n');
+  out.push(indent + '</Placemark>\n');
 }
 
-// =====================================================
-// === Polygon → KML ===
-// =====================================================
-function polygonToKml(poly: KmlPolygon, indent: string): string {
-  let kml = indent + '<Placemark>\n';
-  kml += indent + '  <name>' + escapeXml(poly.name) + '</name>\n';
+// -----------------------------------------------------
+// Polygon → KML
+// -----------------------------------------------------
+function polygonToKml(poly: KmlPolygon, indent: string, out: string[]): void {
+  out.push(indent + '<Placemark>\n');
+  out.push(indent + '  <name>' + escapeXml(poly.name) + '</name>\n');
   if (poly.description) {
-    kml +=
+    out.push(
       indent +
-      '  <description><![CDATA[' +
-      poly.description +
-      ']]></description>\n';
+        '  <description><![CDATA[' +
+        poly.description +
+        ']]></description>\n'
+    );
   }
   const fillColor = cssColorToKml(poly.fillColor || '#4a90d9', 0.6);
   const outlineColor = cssColorToKml(poly.outlineColor || '#ffffff', 1);
-  kml += indent + '  <Style>\n';
-  kml += indent + '    <PolyStyle>\n';
-  kml += indent + '      <color>' + fillColor + '</color>\n';
-  kml += indent + '    </PolyStyle>\n';
-  kml += indent + '    <LineStyle>\n';
-  kml += indent + '      <color>' + outlineColor + '</color>\n';
-  kml += indent + '      <width>' + (poly.outlineWidth || 2) + '</width>\n';
-  kml += indent + '    </LineStyle>\n';
-  kml += indent + '  </Style>\n';
-  kml += indent + '  <Polygon>\n';
-  kml += indent + '    <altitudeMode>absolute</altitudeMode>\n';
-  kml += indent + '    <outerBoundaryIs>\n';
-  kml += indent + '      <LinearRing>\n';
-  kml += indent + '        <coordinates>\n';
+  out.push(indent + '  <Style>\n');
+  out.push(indent + '    <PolyStyle>\n');
+  out.push(indent + '      <color>' + fillColor + '</color>\n');
+  out.push(indent + '    </PolyStyle>\n');
+  out.push(indent + '    <LineStyle>\n');
+  out.push(indent + '      <color>' + outlineColor + '</color>\n');
+  out.push(indent + '      <width>' + (poly.outlineWidth || 2) + '</width>\n');
+  out.push(indent + '    </LineStyle>\n');
+  out.push(indent + '  </Style>\n');
+  out.push(indent + '  <Polygon>\n');
+
+  // ⚡ N6: altitudeMode полигона
+  const altitudeMode = altitudeModeToKml(poly.altitudeMode);
+  if (altitudeMode !== 'clampToGround') {
+    out.push(
+      indent + '    <altitudeMode>' + altitudeMode + '</altitudeMode>\n'
+    );
+  }
+
+  out.push(indent + '    <outerBoundaryIs>\n');
+  out.push(indent + '      <LinearRing>\n');
+  out.push(indent + '        <coordinates>\n');
   poly.positions.forEach(function (p) {
-    kml +=
+    out.push(
       indent +
-      '          ' +
-      p.lon.toFixed(8) +
-      ',' +
-      p.lat.toFixed(8) +
-      ',' +
-      (p.height || 0).toFixed(2) +
-      '\n';
+        '          ' +
+        p.lon.toFixed(8) +
+        ',' +
+        p.lat.toFixed(8) +
+        ',' +
+        (p.height || 0).toFixed(2) +
+        '\n'
+    );
   });
   if (poly.positions.length > 0) {
     const first = poly.positions[0];
@@ -187,52 +235,72 @@ function polygonToKml(poly: KmlPolygon, indent: string): string {
       Math.abs(first.lat - last.lat) < 1e-9 &&
       Math.abs(first.lon - last.lon) < 1e-9;
     if (!isClosed) {
-      kml +=
+      out.push(
         indent +
-        '          ' +
-        first.lon.toFixed(8) +
-        ',' +
-        first.lat.toFixed(8) +
-        ',' +
-        (first.height || 0).toFixed(2) +
-        '\n';
+          '          ' +
+          first.lon.toFixed(8) +
+          ',' +
+          first.lat.toFixed(8) +
+          ',' +
+          (first.height || 0).toFixed(2) +
+          '\n'
+      );
     }
   }
-  kml += indent + '        </coordinates>\n';
-  kml += indent + '      </LinearRing>\n';
-  kml += indent + '    </outerBoundaryIs>\n';
-  kml += indent + '  </Polygon>\n';
-  kml += indent + '</Placemark>\n';
-  return kml;
+  out.push(indent + '        </coordinates>\n');
+  out.push(indent + '      </LinearRing>\n');
+  out.push(indent + '    </outerBoundaryIs>\n');
+  out.push(indent + '  </Polygon>\n');
+  out.push(indent + '</Placemark>\n');
 }
 
-// =====================================================
-// === MeasureItem → Folder(LineString + Points) ===
-// =====================================================
-function measureToKml(measure: MeasureItem, indent: string): string {
+// -----------------------------------------------------
+// MeasureItem → Folder(LineString + Points)
+// -----------------------------------------------------
+function measureToKml(
+  measure: MeasureItem,
+  indent: string,
+  out: string[]
+): void {
   const innerIndent = indent + '  ';
   const deepIndent = indent + '    ';
 
-  let kml = indent + '<Folder>\n';
-  kml += indent + '  <name>' + escapeXml(measure.name) + '</name>\n';
-  kml +=
+  out.push(indent + '<Folder>\n');
+  out.push(indent + '  <name>' + escapeXml(measure.name) + '</name>\n');
+  out.push(
     indent +
-    '  <visibility>' +
-    (measure.visible !== false ? '1' : '0') +
-    '</visibility>\n';
+      '  <visibility>' +
+      (measure.visible !== false ? '1' : '0') +
+      '</visibility>\n'
+  );
 
   if (measure.description) {
-    kml +=
+    out.push(
       innerIndent +
-      '<description><![CDATA[' +
-      measure.description +
-      ']]></description>\n';
+        '<description><![CDATA[' +
+        measure.description +
+        ']]></description>\n'
+    );
   }
 
   const lineColor = cssColorToKml(
-    measure.color || '#a7d948',
-    measure.lineOpacity ?? 0.55
+    measure.color || '#1a1a1a',
+    measure.lineOpacity ?? 0.7
   );
+
+  // ⚡ N6: measure — если все высоты ≈ 0, клампим к рельефу.
+  //   Иначе absolute (точки в 3D).
+  let allZero = true;
+  if (measure.positions.length > 0) {
+    for (let i = 0; i < measure.positions.length; i++) {
+    const h = measure.positions[i].height || 0;
+    if (Math.abs(h) > 0.001) {
+      allZero = false;
+      break;
+    }
+  }
+  }
+  const measureAltMode = allZero ? 'clampToGround' : 'absolute';
 
   // --- Линия ---
   if (measure.positions.length >= 2) {
@@ -241,144 +309,177 @@ function measureToKml(measure: MeasureItem, indent: string): string {
         ? measure.positions.concat([measure.positions[0]])
         : measure.positions;
 
-    kml += innerIndent + '<Placemark>\n';
-    kml +=
+    out.push(innerIndent + '<Placemark>\n');
+    out.push(
       innerIndent +
-      '  <name>' +
-      escapeXml(measure.name + ' (линия)') +
-      '</name>\n';
-    kml += innerIndent + '  <Style>\n';
-    kml += innerIndent + '    <LineStyle>\n';
-    kml += innerIndent + '      <color>' + lineColor + '</color>\n';
-    kml +=
+        '  <name>' +
+        escapeXml(measure.name + ' (линия)') +
+        '</name>\n'
+    );
+    out.push(innerIndent + '  <Style>\n');
+    out.push(innerIndent + '    <LineStyle>\n');
+    out.push(innerIndent + '      <color>' + lineColor + '</color>\n');
+    out.push(
       innerIndent +
-      '      <width>' +
-      (measure.width || 2) +
-      '</width>\n';
-    kml += innerIndent + '    </LineStyle>\n';
-    kml += innerIndent + '  </Style>\n';
-    kml += innerIndent + '  <LineString>\n';
-    kml += innerIndent + '    <tessellate>1</tessellate>\n';
-    kml += innerIndent + '    <altitudeMode>absolute</altitudeMode>\n';
-    kml += innerIndent + '    <coordinates>\n';
+        '      <width>' +
+        (measure.width || 2) +
+        '</width>\n'
+    );
+    out.push(innerIndent + '    </LineStyle>\n');
+    out.push(innerIndent + '  </Style>\n');
+    out.push(innerIndent + '  <LineString>\n');
+    out.push(innerIndent + '    <tessellate>1</tessellate>\n');
+    if (measureAltMode === 'absolute') {
+      out.push(
+        innerIndent + '    <altitudeMode>absolute</altitudeMode>\n'
+      );
+    }
+    out.push(innerIndent + '    <coordinates>\n');
     positions.forEach(function (p) {
-      kml +=
+      out.push(
         deepIndent +
-        p.lon.toFixed(8) +
-        ',' +
-        p.lat.toFixed(8) +
-        ',' +
-        (p.height || 0).toFixed(2) +
-        '\n';
+          p.lon.toFixed(8) +
+          ',' +
+          p.lat.toFixed(8) +
+          ',' +
+          (p.height || 0).toFixed(2) +
+          '\n'
+      );
     });
-    kml += innerIndent + '    </coordinates>\n';
-    kml += innerIndent + '  </LineString>\n';
-    kml += innerIndent + '</Placemark>\n';
+    out.push(innerIndent + '    </coordinates>\n');
+    out.push(innerIndent + '  </LineString>\n');
+    out.push(innerIndent + '</Placemark>\n');
   }
 
   // --- Точки ---
   const showNumbers = measure.showNumbers !== false;
-  const pointSize = measure.pointSize || 11;
+  const pointSize = measure.pointSize || 14;
   const pointFill = measure.pointFillColor || '#ffffff';
-  const pointOutline = measure.pointOutlineColor || '#a7d948';
-  const pointOutlineWidth = measure.pointOutlineWidth ?? 2;
+  const pointOutline = measure.pointOutlineColor || '#1a1a1a';
 
   measure.positions.forEach(function (p, idx) {
     const pointColor = cssColorToKml(pointFill, 1);
     const pointOutlineColor = cssColorToKml(pointOutline, 1);
 
-    kml += innerIndent + '<Placemark>\n';
-    kml +=
+    out.push(innerIndent + '<Placemark>\n');
+    out.push(
       innerIndent +
-      '  <name>' +
-      escapeXml(
-        showNumbers ? 'Точка ' + (idx + 1) : 'Точка'
-      ) +
-      '</name>\n';
-    kml +=
+        '  <name>' +
+        escapeXml(showNumbers ? 'Точка ' + (idx + 1) : 'Точка') +
+        '</name>\n'
+    );
+    out.push(
       innerIndent +
-      '  <description><![CDATA[' +
-      'Широта: ' +
-      p.lat.toFixed(8) +
-      '\nДолгота: ' +
-      p.lon.toFixed(8) +
-      '\nВысота: ' +
-      (p.height || 0).toFixed(2) +
-      ' м' +
-      ']]></description>\n';
-    kml += innerIndent + '  <Style>\n';
-    kml += innerIndent + '    <IconStyle>\n';
-    kml += innerIndent + '      <color>' + pointColor + '</color>\n';
-    kml +=
+        '  <description><![CDATA[' +
+        'Широта: ' +
+        p.lat.toFixed(8) +
+        '\nДолгота: ' +
+        p.lon.toFixed(8) +
+        '\nВысота: ' +
+        (p.height || 0).toFixed(2) +
+        ' м' +
+        ']]></description>\n'
+    );
+    out.push(innerIndent + '  <Style>\n');
+    out.push(innerIndent + '    <IconStyle>\n');
+    out.push(innerIndent + '      <color>' + pointColor + '</color>\n');
+    out.push(
       innerIndent +
-      '      <scale>' +
-      (pointSize / 12).toFixed(2) +
-      '</scale>\n';
-    kml += innerIndent + '      <Icon>\n';
-    kml +=
+        '      <scale>' +
+        (pointSize / 12).toFixed(2) +
+        '</scale>\n'
+    );
+    out.push(innerIndent + '      <Icon>\n');
+    out.push(
       innerIndent +
-      '        <href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href>\n';
-    kml += innerIndent + '      </Icon>\n';
-    kml += innerIndent + '    </IconStyle>\n';
-    kml += innerIndent + '    <LabelStyle>\n';
-    kml +=
+        '        <href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href>\n'
+    );
+    out.push(innerIndent + '      </Icon>\n');
+    out.push(innerIndent + '    </IconStyle>\n');
+    out.push(innerIndent + '    <LabelStyle>\n');
+    out.push(
       innerIndent +
-      '      <color>' +
-      pointOutlineColor +
-      '</color>\n';
-    kml += innerIndent + '      <scale>1</scale>\n';
-    kml += innerIndent + '    </LabelStyle>\n';
-    kml += innerIndent + '  </Style>\n';
-    kml += innerIndent + '  <Point>\n';
-    kml += innerIndent + '    <altitudeMode>absolute</altitudeMode>\n';
-    kml +=
+        '      <color>' +
+        pointOutlineColor +
+        '</color>\n'
+    );
+    out.push(innerIndent + '      <scale>1</scale>\n');
+    out.push(innerIndent + '    </LabelStyle>\n');
+    out.push(innerIndent + '  </Style>\n');
+    out.push(innerIndent + '  <Point>\n');
+    if (measureAltMode === 'absolute') {
+      out.push(
+        innerIndent + '    <altitudeMode>absolute</altitudeMode>\n'
+      );
+    }
+    out.push(
       innerIndent +
-      '    <coordinates>' +
-      p.lon.toFixed(8) +
-      ',' +
-      p.lat.toFixed(8) +
-      ',' +
-      (p.height || 0).toFixed(2) +
-      '</coordinates>\n';
-    kml += innerIndent + '  </Point>\n';
-    kml += innerIndent + '</Placemark>\n';
+        '    <coordinates>' +
+        p.lon.toFixed(8) +
+        ',' +
+        p.lat.toFixed(8) +
+        ',' +
+        (p.height || 0).toFixed(2) +
+        '</coordinates>\n'
+    );
+    out.push(innerIndent + '  </Point>\n');
+    out.push(innerIndent + '</Placemark>\n');
   });
 
-  kml += indent + '</Folder>\n';
-  return kml;
+  out.push(indent + '</Folder>\n');
 }
 
-// =====================================================
-// === Универсальный обход ===
-// =====================================================
-function itemToKml(item: TreeItem, indent: string): string {
-  if (isPlace(item)) return placeToKml(item, indent);
-  if (isKmlLine(item)) return lineToKml(item, indent);
-  if (isKmlPolygon(item)) return polygonToKml(item, indent);
-  if (isMeasure(item)) return measureToKml(item, indent);
-
-  if (isContainer(item)) {
-    let kml = indent + '<Folder>\n';
-    kml += indent + '  <name>' + escapeXml(item.name) + '</name>\n';
-    kml +=
-      indent +
-      '  <visibility>' +
-      (item.visible ? '1' : '0') +
-      '</visibility>\n';
-    kml += indent + '  <open>' + (item.expanded ? '1' : '0') + '</open>\n';
-    item.children.forEach(function (child) {
-      kml += itemToKml(child, indent + '  ');
-    });
-    kml += indent + '</Folder>\n';
-    return kml;
+// -----------------------------------------------------
+// Универсальный обход
+// -----------------------------------------------------
+function itemToKml(item: TreeItem, indent: string, out: string[]): void {
+  if (isPlace(item)) {
+    placeToKml(item, indent, out);
+    return;
+  }
+  if (isKmlLine(item)) {
+    lineToKml(item, indent, out);
+    return;
+  }
+  if (isKmlPolygon(item)) {
+    polygonToKml(item, indent, out);
+    return;
+  }
+  if (isMeasure(item)) {
+    measureToKml(item, indent, out);
+    return;
   }
 
-  return '';
+  if (isContainer(item)) {
+    out.push(indent + '<Folder>\n');
+    out.push(indent + '  <name>' + escapeXml(item.name) + '</name>\n');
+    out.push(
+      indent +
+        '  <visibility>' +
+        (item.visible ? '1' : '0') +
+        '</visibility>\n'
+    );
+    out.push(
+      indent + '  <open>' + (item.expanded ? '1' : '0') + '</open>\n'
+    );
+    if (item.note) {
+      out.push(
+        indent +
+          '  <description><![CDATA[' +
+          item.note +
+          ']]></description>\n'
+      );
+    }
+    item.children.forEach(function (child) {
+      itemToKml(child, indent + '  ', out);
+    });
+    out.push(indent + '</Folder>\n');
+  }
 }
 
-// =====================================================
-// === Публичный API ===
-// =====================================================
+// -----------------------------------------------------
+// Публичный API
+// -----------------------------------------------------
 export interface ExportMeta {
   author?: string;
   organization?: string;
@@ -390,35 +491,42 @@ export function exportTreeToKml(
   projectName: string,
   meta?: ExportMeta
 ): string {
-  let kml = '<?xml version="1.0" encoding="UTF-8"?>\n';
-  kml +=
-    '<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:atom="http://www.w3.org/2005/Atom">\n';
-  kml += '  <Document>\n';
-  kml += '    <name>' + escapeXml(projectName) + '</name>\n';
+  // ⚡ N7: собираем в массив чанков и join один раз.
+  //   Для 100k+ объектов это O(N), а не O(N²).
+  const out: string[] = [];
+
+  out.push('<?xml version="1.0" encoding="UTF-8"?>\n');
+  out.push(
+    '<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:atom="http://www.w3.org/2005/Atom">\n'
+  );
+  out.push('  <Document>\n');
+  out.push('    <name>' + escapeXml(projectName) + '</name>\n');
 
   if (meta && (meta.author || meta.organization)) {
     const name = meta.author || meta.organization || '';
-    kml += '    <atom:author>\n';
-    kml += '      <atom:name>' + escapeXml(name) + '</atom:name>\n';
-    kml += '    </atom:author>\n';
+    out.push('    <atom:author>\n');
+    out.push('      <atom:name>' + escapeXml(name) + '</atom:name>\n');
+    out.push('    </atom:author>\n');
   }
 
   if (meta && meta.description) {
-    kml +=
+    out.push(
       '    <description><![CDATA[' +
-      meta.description +
-      ']]></description>\n';
+        meta.description +
+        ']]></description>\n'
+    );
   } else {
-    kml += '    <description>Создано в PoiskHelper</description>\n';
+    out.push('    <description>Создано в PoiskHelper</description>\n');
   }
 
   tree.forEach(function (item) {
-    kml += itemToKml(item, '    ');
+    itemToKml(item, '    ', out);
   });
 
-  kml += '  </Document>\n';
-  kml += '</kml>\n';
-  return kml;
+  out.push('  </Document>\n');
+  out.push('</kml>\n');
+
+  return out.join('');
 }
 
 export async function exportTreeToKmz(
@@ -429,6 +537,14 @@ export async function exportTreeToKmz(
   const kmlString = exportTreeToKml(tree, projectName, meta);
   const zip = new JSZip();
   zip.file('doc.kml', kmlString);
-  const uint8 = await zip.generateAsync({ type: 'uint8array' });
+
+  // ⚡ N8: DEFLATE с уровнем 6 — хороший баланс
+  //   скорость/размер. Для 100+ МБ KML всё равно держит всё в памяти,
+  //   но хотя бы не раздувает зря.
+  const uint8 = await zip.generateAsync({
+    type: 'uint8array',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
   return uint8;
 }

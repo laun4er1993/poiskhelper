@@ -1,6 +1,6 @@
 // =====================================================
 // src/components/settings/tabs/MapTab.tsx
-// Настройки карты + управление своими источниками
+// Настройки карты + свои источники + настройки импорта
 // =====================================================
 
 import { useState } from 'react';
@@ -18,29 +18,31 @@ import {
   Trash2,
   Edit3,
   Upload,
-  Droplet,
-  Sun,
-  Contrast,
-  Flag,
-  Globe2,
+  Search,
+  X as XIcon,
   Satellite,
   Mountain,
   History,
-  Search,
-  X as XIcon,
+  FolderTree,
+  Eye,
 } from 'lucide-react';
 
 import type { AppSettings, MapSourceSettings } from '../../../types/settings';
 import type {
   MapSourceInfo,
+  MapSourceCategory,
   CustomMapSource,
-  CountryFilter,
 } from '../../../types/map-sources';
 import {
-  getFilteredMapSources,
+  getAllMapSources,
   getMapSourceInfo,
   resolveTimeMax,
 } from '../../../types/map-sources';
+import {
+  OVERLAY_SOURCES,
+  readOverlaySettings,
+  type OverlayId,
+} from '../../../types/overlay-sources';
 import { useWaybackReleases } from '../../../hooks/useWaybackReleases';
 
 import Section from '../ui/Section';
@@ -55,11 +57,66 @@ interface MapTabProps {
   onNeedCustomDialog: (edit?: CustomMapSource | null) => void;
 }
 
-function categoryIcon(cat: MapSourceInfo['category']) {
-  if (cat === 'satellite') return Satellite;
-  if (cat === 'topo') return Mountain;
-  if (cat === 'history') return History;
-  return MapIcon;
+interface SourceGroup {
+  id: string;
+  label: string;
+  icon: any;
+  items: MapSourceInfo[];
+}
+
+function buildGroups(sources: MapSourceInfo[]): SourceGroup[] {
+  const builtIn = sources.filter(function (s) {
+    return !s.isCustom;
+  });
+  const custom = sources.filter(function (s) {
+    return s.isCustom;
+  });
+
+  const byCategory = function (cat: MapSourceCategory) {
+    return builtIn.filter(function (s) {
+      return s.category === cat;
+    });
+  };
+
+  const groups: SourceGroup[] = [
+    {
+      id: 'satellite',
+      label: 'Спутник',
+      icon: Satellite,
+      items: byCategory('satellite'),
+    },
+    {
+      id: 'history',
+      label: 'История',
+      icon: History,
+      items: byCategory('history'),
+    },
+    {
+      id: 'street',
+      label: 'Схема',
+      icon: MapIcon,
+      items: byCategory('street'),
+    },
+    {
+      id: 'topo',
+      label: 'Топо',
+      icon: Mountain,
+      items: byCategory('topo'),
+    },
+  ];
+
+  if (custom.length > 0) {
+    groups.push({
+      id: 'custom',
+      label: 'Свои карты',
+      icon: Plus,
+      items: custom,
+    });
+  }
+
+  return groups.filter(function (g) {
+    return g.items.length > 0;
+  });
 }
 
 function MapTab({
@@ -74,27 +131,48 @@ function MapTab({
   const [searchQuery, setSearchQuery] = useState('');
 
   const customSources = mapSource.customSources || [];
-  const countryFilter: CountryFilter = mapSource.countryFilter || 'russia';
 
   const updateMapSource = function (updater: Partial<MapSourceSettings>) {
     onChange({ mapSource: { ...mapSource, ...updater } });
   };
 
-  const availableSources = getFilteredMapSources(countryFilter, customSources);
+  const updateImportDefaults = function (updater: {
+    startHidden?: boolean;
+    startCollapsed?: boolean;
+  }) {
+    onChange({
+      importDefaults: { ...settings.importDefaults, ...updater },
+    });
+  };
+
+  const allSources = getAllMapSources(customSources);
   const filteredSources = searchQuery.trim()
-    ? availableSources.filter(function (s) {
+    ? allSources.filter(function (s) {
         const q = searchQuery.trim().toLowerCase();
         return (
           s.label.toLowerCase().indexOf(q) >= 0 ||
           s.description.toLowerCase().indexOf(q) >= 0
         );
       })
-    : availableSources;
+    : allSources;
+
+  const groups = buildGroups(filteredSources);
 
   const currentInfo = getMapSourceInfo(
     mapSource.baseLayer,
     customSources
   );
+
+  const overlays = readOverlaySettings(mapSource.overlays);
+  const showOverlays =
+    currentInfo.category === 'satellite' ||
+    currentInfo.provider === 'esri-wayback';
+
+  const setOverlay = function (id: OverlayId, value: boolean) {
+    const next = { ...overlays };
+    next[id] = value;
+    updateMapSource({ overlays: next });
+  };
 
   const handleDeleteCustom = function (id: string) {
     if (!window.confirm('Удалить эту карту?')) return;
@@ -112,59 +190,7 @@ function MapTab({
 
   return (
     <>
-      {/* ============ ИСТОЧНИК КАРТЫ ============ */}
       <Section title="Источник карты" icon={<MapIcon size={13} />}>
-        {/* Страновой фильтр */}
-        <div style={styles.countryTabs}>
-          <button
-            style={{
-              ...styles.countryTab,
-              backgroundColor:
-                countryFilter === 'russia'
-                  ? 'var(--accent)'
-                  : 'transparent',
-              color:
-                countryFilter === 'russia'
-                  ? 'var(--accent-text)'
-                  : 'var(--text-primary)',
-              borderColor:
-                countryFilter === 'russia'
-                  ? 'var(--accent)'
-                  : 'var(--border)',
-            }}
-            onClick={function () {
-              updateMapSource({ countryFilter: 'russia' });
-            }}
-          >
-            <Flag size={11} />
-            <span>Россия</span>
-          </button>
-          <button
-            style={{
-              ...styles.countryTab,
-              backgroundColor:
-                countryFilter === 'world'
-                  ? 'var(--accent)'
-                  : 'transparent',
-              color:
-                countryFilter === 'world'
-                  ? 'var(--accent-text)'
-                  : 'var(--text-primary)',
-              borderColor:
-                countryFilter === 'world'
-                  ? 'var(--accent)'
-                  : 'var(--border)',
-            }}
-            onClick={function () {
-              updateMapSource({ countryFilter: 'world' });
-            }}
-          >
-            <Globe2 size={11} />
-            <span>Весь мир</span>
-          </button>
-        </div>
-
-        {/* Поиск */}
         <div style={styles.searchRow}>
           <Search size={11} color="var(--text-muted)" />
           <input
@@ -188,66 +214,143 @@ function MapTab({
           )}
         </div>
 
-        {/* Сетка карт */}
-        <div style={styles.sourceGrid}>
-          {filteredSources.map(function (b) {
-            const active = mapSource.baseLayer === b.id;
-            const CatIcon = categoryIcon(b.category);
-            return (
-              <button
-                key={b.id}
-                style={{
-                  ...styles.sourceCard,
-                  borderColor: active ? 'var(--accent)' : 'var(--border)',
-                  backgroundColor: active
-                    ? 'var(--bg-surface-hover)'
-                    : 'var(--bg-surface)',
-                }}
-                onClick={function () {
-                  updateMapSource({ baseLayer: b.id });
-                }}
-                title={b.description}
-              >
-                <div
-                  style={{
-                    ...styles.sourcePreview,
-                    backgroundColor: b.previewColor,
-                  }}
-                >
-                  <CatIcon
-                    size={14}
-                    color="rgba(255,255,255,0.85)"
-                    style={{ position: 'absolute', bottom: 4, left: 4 }}
-                  />
-                  {b.supportsTime && (
-                    <Calendar
-                      size={10}
-                      color="rgba(255,255,255,0.9)"
-                      style={{ position: 'absolute', top: 4, right: 4 }}
-                    />
-                  )}
-                  {b.isCustom && (
-                    <span style={styles.customBadge}>СВОЯ</span>
-                  )}
-                </div>
-                <span style={styles.sourceLabel}>{b.label}</span>
-                {active && (
-                  <Check
-                    size={12}
-                    color="var(--accent)"
-                    style={{ position: 'absolute', top: 6, right: 6 }}
-                  />
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {filteredSources.length === 0 && (
-          <div style={styles.emptyState}>
-            Ничего не найдено
-          </div>
+        {groups.length === 0 && (
+          <div style={styles.emptyState}>Ничего не найдено</div>
         )}
+
+        {groups.map(function (group) {
+          const GIcon = group.icon;
+          return (
+            <div key={group.id} style={styles.group}>
+              <div style={styles.groupHeader}>
+                <GIcon size={11} color="var(--accent)" />
+                <span style={styles.groupTitle}>{group.label}</span>
+                <span style={styles.groupCount}>
+                  {group.items.length}
+                </span>
+              </div>
+              <div style={styles.groupBody}>
+                {group.items.map(function (item) {
+                  const active = mapSource.baseLayer === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      role="button"
+                      tabIndex={0}
+                      style={{
+                        ...styles.sourceCard,
+                        borderColor: active
+                          ? 'var(--accent)'
+                          : 'var(--border)',
+                        backgroundColor: active
+                          ? 'var(--bg-surface-hover)'
+                          : 'var(--bg-surface)',
+                      }}
+                      onClick={function () {
+                        updateMapSource({ baseLayer: item.id });
+                      }}
+                      onKeyDown={function (e) {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          updateMapSource({ baseLayer: item.id });
+                        }
+                      }}
+                      title={item.description}
+                    >
+                      <span
+                        style={{
+                          ...styles.sourcePreview,
+                          backgroundColor: item.previewColor,
+                        }}
+                      />
+                      <span style={styles.sourceInfo}>
+                        <span
+                          style={styles.sourceLabel}
+                          title={item.label}
+                        >
+                          {item.label}
+                        </span>
+                        <span
+                          style={styles.sourceDesc}
+                          title={item.description}
+                        >
+                          {item.description}
+                        </span>
+                      </span>
+                      {active && (
+                        <Check
+                          size={12}
+                          color="var(--accent)"
+                          style={{ flexShrink: 0 }}
+                        />
+                      )}
+                      {item.isCustom && (
+                        <>
+                          <button
+                            style={styles.iconBtn}
+                            onClick={function (e) {
+                              e.stopPropagation();
+                              onNeedCustomDialog(
+                                customSources.find(function (c) {
+                                  return c.id === item.id;
+                                }) || null
+                              );
+                            }}
+                            title="Редактировать"
+                          >
+                            <Edit3 size={11} />
+                          </button>
+                          <button
+                            style={{
+                              ...styles.iconBtn,
+                              color: 'var(--danger)',
+                            }}
+                            onClick={function (e) {
+                              e.stopPropagation();
+                              handleDeleteCustom(item.id);
+                            }}
+                            title="Удалить"
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+
+        <div style={styles.customActionsRow}>
+          <button
+            style={styles.primaryBtn}
+            onClick={function () {
+              onNeedCustomDialog(null);
+            }}
+          >
+            <Plus size={12} /> Добавить карту
+          </button>
+          <button
+            style={styles.secondaryBtn}
+            onClick={function () {
+              onNeedCustomDialog({
+                id: '__import_xml__',
+                name: '',
+                urlTemplate: '',
+                maxLevel: 19,
+                attribution: '',
+                category: 'satellite',
+                previewColor: '#4a90d9',
+                addedAt: '',
+              });
+            }}
+            title="Импорт providers.xml из Locus Map"
+          >
+            <Upload size={12} /> Импорт XML
+          </button>
+        </div>
 
         <div style={styles.hintSmall}>
           {currentInfo.description}
@@ -255,7 +358,6 @@ function MapTab({
           <span style={styles.attribution}>{currentInfo.attribution}</span>
         </div>
 
-        {/* Wayback: обновить релизы */}
         {currentInfo.provider === 'esri-wayback' && (
           <div style={styles.waybackRow}>
             <button
@@ -308,7 +410,6 @@ function MapTab({
         )}
       </Section>
 
-      {/* ============ ВНЕШНИЙ ВИД ============ */}
       <Section title="Внешний вид слоя" icon={<Layers size={13} />}>
         <FieldRow label="Прозрачность:">
           <input
@@ -365,112 +466,57 @@ function MapTab({
         </FieldRow>
       </Section>
 
-      {/* ============ СВОИ КАРТЫ ============ */}
-      <Section title="Свои карты" icon={<Plus size={13} />}>
-        <div style={styles.customActionsRow}>
-          <button
-            style={styles.primaryBtn}
-            onClick={function () {
-              onNeedCustomDialog(null);
-            }}
-          >
-            <Plus size={12} /> Добавить карту
-          </button>
-          <button
-            style={styles.secondaryBtn}
-            onClick={function () {
-              // Открываем диалог на вкладке «Импорт XML»
-              onNeedCustomDialog({
-                id: '__import_xml__',
-                name: '',
-                urlTemplate: '',
-                maxLevel: 19,
-                attribution: '',
-                category: 'satellite',
-                previewColor: '#4a90d9',
-                addedAt: '',
-              });
-            }}
-            title="Импорт providers.xml из Locus Map"
-          >
-            <Upload size={12} /> Импорт XML
-          </button>
+      {showOverlays && (
+        <Section title="Слои поверх" icon={<Layers size={13} />}>
+          <div style={styles.hintSmall}>
+            Дополнительные слои для спутниковой карты. Работают для Esri,
+            Sentinel-2, Bing и своих спутниковых источников.
+          </div>
+
+          {OVERLAY_SOURCES.map(function (ov) {
+            return (
+              <ToggleOption
+                key={ov.id}
+                label={ov.label}
+                checked={overlays[ov.id] === true}
+                onChange={function (v) {
+                  setOverlay(ov.id, v);
+                }}
+              />
+            );
+          })}
+        </Section>
+      )}
+
+      <Section title="Импорт KML/KMZ" icon={<FolderTree size={13} />}>
+        <ToggleOption
+          icon={<Eye size={13} color="var(--accent)" />}
+          label="Импортированные объекты скрыты на глобусе"
+          checked={settings.importDefaults.startHidden}
+          onChange={function (v) {
+            updateImportDefaults({ startHidden: v });
+          }}
+        />
+        <div style={styles.hintSmall}>
+          Если включено — новые метки, линии и полигоны появятся в
+          дереве, но не будут отрисованы на глобусе. Показать можно
+          чекбоксом в дереве.
         </div>
 
-        {customSources.length === 0 ? (
-          <div style={styles.emptyCustom}>
-            Нет своих карт. Можно добавить любую тайловую карту
-            (URL-шаблон с {'{z}'}/{' {x}'}/{' {y}'}) или импортировать
-            providers.xml из Locus Map.
-          </div>
-        ) : (
-          <div style={styles.customList}>
-            {customSources.map(function (c) {
-              const active = mapSource.baseLayer === c.id;
-              return (
-                <div
-                  key={c.id}
-                  style={{
-                    ...styles.customItem,
-                    borderColor: active
-                      ? 'var(--accent)'
-                      : 'var(--border)',
-                    backgroundColor: active
-                      ? 'var(--accent-soft)'
-                      : 'var(--bg-surface)',
-                  }}
-                >
-                  <span
-                    style={{
-                      ...styles.customDot,
-                      backgroundColor: c.previewColor || '#4a90d9',
-                    }}
-                  />
-                  <div style={styles.customInfo}>
-                    <div style={styles.customName}>{c.name}</div>
-                    <div style={styles.customUrl} title={c.urlTemplate}>
-                      {c.urlTemplate}
-                    </div>
-                  </div>
-                  <button
-                    style={styles.iconBtn}
-                    onClick={function () {
-                      updateMapSource({ baseLayer: c.id });
-                    }}
-                    title="Активировать"
-                  >
-                    {active ? (
-                      <Check size={11} color="var(--accent)" />
-                    ) : (
-                      <MapIcon size={11} />
-                    )}
-                  </button>
-                  <button
-                    style={styles.iconBtn}
-                    onClick={function () {
-                      onNeedCustomDialog(c);
-                    }}
-                    title="Редактировать"
-                  >
-                    <Edit3 size={11} />
-                  </button>
-                  <button
-                    style={{ ...styles.iconBtn, color: 'var(--danger)' }}
-                    onClick={function () {
-                      handleDeleteCustom(c.id);
-                    }}
-                    title="Удалить"
-                  >
-                    <Trash2 size={11} />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        <ToggleOption
+          icon={<FolderTree size={13} color="var(--warning)" />}
+          label="Папки импорта свёрнуты"
+          checked={settings.importDefaults.startCollapsed}
+          onChange={function (v) {
+            updateImportDefaults({ startCollapsed: v });
+          }}
+        />
+        <div style={styles.hintSmall}>
+          Если включено — после импорта все папки из KML будут
+          свёрнуты, чтобы дерево не раздувалось.
+        </div>
       </Section>
 
-      {/* ============ 3D-КОНТЕНТ ============ */}
       <Section title="3D-контент" icon={<Building2 size={13} />}>
         <ToggleOption
           icon={<Building2 size={13} color="var(--accent)" />}
@@ -483,7 +529,6 @@ function MapTab({
         </div>
       </Section>
 
-      {/* ============ СОХРАНЕНИЕ ============ */}
       <Section title="Сохранение и загрузка" icon={<Save size={13} />}>
         <ToggleOption
           icon={<Save size={13} color="var(--success)" />}
@@ -510,7 +555,6 @@ function MapTab({
         </FieldRow>
       </Section>
 
-      {/* ============ ЗАПУСК ============ */}
       <Section title="При запуске" icon={<Globe size={13} />}>
         <ToggleOption
           icon={<Sparkles size={13} color="var(--warning)" />}
@@ -557,6 +601,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'inherit',
     cursor: 'pointer',
     minWidth: 130,
+    maxWidth: '100%',
     outline: 'none',
   },
   dateInput: {
@@ -568,11 +613,14 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     fontFamily: 'inherit',
     outline: 'none',
+    maxWidth: '100%',
+    boxSizing: 'border-box',
   },
   range: {
     flex: 1,
     maxWidth: 260,
     accentColor: 'var(--accent)',
+    minWidth: 0,
   },
   rangeValue: {
     fontSize: 11,
@@ -581,30 +629,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     minWidth: 48,
     textAlign: 'right',
-  },
-  countryTabs: {
-    display: 'flex',
-    gap: 4,
-    padding: 3,
-    backgroundColor: 'var(--overlay-soft)',
-    borderRadius: 'var(--radius-small)',
-    border: '1px solid var(--border)',
-    marginBottom: 8,
-  },
-  countryTab: {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    padding: '6px 10px',
-    border: '1px solid',
-    borderRadius: 4,
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-    fontSize: 11.5,
-    fontWeight: 600,
-    transition: 'all 0.15s',
+    flexShrink: 0,
   },
   searchRow: {
     display: 'flex',
@@ -637,52 +662,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-muted)',
     cursor: 'pointer',
     padding: 0,
-  },
-  sourceGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-    gap: 6,
-  },
-  sourceCard: {
-    position: 'relative',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: 4,
-    padding: '6px 6px 8px 6px',
-    backgroundColor: 'var(--bg-surface)',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--radius-small)',
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-    color: 'var(--text-primary)',
-    transition: 'all 0.15s',
-  },
-  sourcePreview: {
-    width: '100%',
-    height: 52,
-    borderRadius: 'var(--radius-small)',
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  sourceLabel: {
-    fontSize: 11,
-    fontWeight: 600,
-    color: 'var(--text-secondary)',
-    textAlign: 'center',
-    lineHeight: 1.3,
-  },
-  customBadge: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    padding: '1px 5px',
-    backgroundColor: 'var(--accent)',
-    color: 'var(--accent-text)',
-    fontSize: 7.5,
-    fontWeight: 800,
-    borderRadius: 3,
-    letterSpacing: 0.5,
+    flexShrink: 0,
   },
   emptyState: {
     textAlign: 'center',
@@ -691,11 +671,150 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '20px 10px',
     fontStyle: 'italic',
   },
+  group: {
+    display: 'flex',
+    flexDirection: 'column',
+    borderRadius: 'var(--radius-small)',
+    border: '1px solid var(--border)',
+    overflow: 'hidden',
+    marginBottom: 6,
+  },
+  groupHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '5px 8px',
+    backgroundColor: 'var(--overlay-soft)',
+    borderBottom: '1px solid var(--border)',
+    minHeight: 28,
+  },
+  groupTitle: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: 700,
+    color: 'var(--text-primary)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    minWidth: 0,
+  },
+  groupCount: {
+    fontSize: 9.5,
+    color: 'var(--text-muted)',
+    backgroundColor: 'var(--bg-input)',
+    padding: '0px 5px',
+    borderRadius: 8,
+    fontFamily: 'Consolas, monospace',
+    flexShrink: 0,
+  },
+  groupBody: {
+    display: 'flex',
+    flexDirection: 'column',
+    padding: 4,
+    gap: 3,
+  },
+  sourceCard: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '6px 8px',
+    border: '1px solid',
+    borderRadius: 5,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    textAlign: 'left',
+    color: 'var(--text-primary)',
+    transition: 'all 0.12s',
+    outline: 'none',
+    minWidth: 0,
+  },
+  sourcePreview: {
+    width: 32,
+    height: 32,
+    borderRadius: 4,
+    flexShrink: 0,
+  },
+  sourceInfo: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 1,
+    minWidth: 0,
+    overflow: 'hidden',
+  },
+  sourceLabel: {
+    fontSize: 11.5,
+    fontWeight: 600,
+    color: 'var(--text-primary)',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  sourceDesc: {
+    fontSize: 9.5,
+    color: 'var(--text-muted)',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  iconBtn: {
+    width: 22,
+    height: 22,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    border: '1px solid var(--border)',
+    borderRadius: 3,
+    color: 'var(--text-secondary)',
+    cursor: 'pointer',
+    padding: 0,
+    flexShrink: 0,
+  },
+  customActionsRow: {
+    display: 'flex',
+    gap: 6,
+    marginTop: 8,
+    flexWrap: 'wrap',
+  },
+  primaryBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 5,
+    padding: '7px 14px',
+    backgroundColor: 'var(--accent)',
+    border: 'none',
+    borderRadius: 'var(--radius-small)',
+    color: 'var(--accent-text)',
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    whiteSpace: 'nowrap',
+  },
+  secondaryBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 5,
+    padding: '7px 14px',
+    backgroundColor: 'transparent',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-small)',
+    color: 'var(--text-secondary)',
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    whiteSpace: 'nowrap',
+  },
   waybackRow: {
     display: 'flex',
     alignItems: 'center',
     gap: 6,
     marginTop: 6,
+    flexWrap: 'wrap',
   },
   refreshBtn: {
     display: 'flex',
@@ -720,102 +839,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     color: 'var(--danger)',
     fontWeight: 600,
-  },
-  customActionsRow: {
-    display: 'flex',
-    gap: 6,
-    marginBottom: 8,
-  },
-  primaryBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 5,
-    padding: '7px 14px',
-    backgroundColor: 'var(--accent)',
-    border: 'none',
-    borderRadius: 'var(--radius-small)',
-    color: 'var(--accent-text)',
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-  },
-  secondaryBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 5,
-    padding: '7px 14px',
-    backgroundColor: 'transparent',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--radius-small)',
-    color: 'var(--text-secondary)',
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-  },
-  emptyCustom: {
-    fontSize: 11,
-    color: 'var(--text-muted)',
-    fontStyle: 'italic',
-    padding: '10px 0',
-    lineHeight: 1.5,
-  },
-  customList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 4,
-  },
-  customItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    padding: '8px 10px',
-    border: '1px solid',
-    borderRadius: 'var(--radius-small)',
-  },
-  customDot: {
-    width: 10,
-    height: 10,
-    borderRadius: '50%',
-    flexShrink: 0,
-  },
-  customInfo: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 1,
-    minWidth: 0,
-  },
-  customName: {
-    fontSize: 12,
-    fontWeight: 600,
-    color: 'var(--text-primary)',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  },
-  customUrl: {
-    fontSize: 10,
-    color: 'var(--text-muted)',
-    fontFamily: 'Consolas, monospace',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  },
-  iconBtn: {
-    width: 24,
-    height: 24,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-    color: 'var(--text-secondary)',
-    cursor: 'pointer',
-    padding: 0,
-    flexShrink: 0,
   },
 };
 

@@ -1,9 +1,15 @@
 // =====================================================
 // src/services/project/read-write.ts
-// Чтение/запись .poiskhelper, диалоги выбора файла проекта
+// Чтение/запись .poiskhelper + диалоги
 // =====================================================
 
-import { readTextFile, writeTextFile, exists, remove } from '@tauri-apps/plugin-fs';
+import {
+  readTextFile,
+  writeTextFile,
+  exists,
+  remove,
+  stat,
+} from '@tauri-apps/plugin-fs';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import type { ProjectData, ProjectMeta, TreeItem } from '../../types';
 import { createDefaultProjectMeta } from '../../types/project';
@@ -17,16 +23,20 @@ const PROJECT_FILTER = {
 };
 
 // -----------------------------------------------------
-// ⚡ Вычисление размера в байтах (а не в символах)
+// Точный размер файла на диске (с fallback на эстимейт)
 // -----------------------------------------------------
-function byteLength(text: string): number {
+async function safeFileSize(path: string, textFallback: string): Promise<number> {
   try {
-    if (typeof TextEncoder !== 'undefined') {
-      return new TextEncoder().encode(text).length;
+    const info = await stat(path);
+    if (info && typeof info.size === 'number' && isFinite(info.size)) {
+      return info.size;
     }
-  } catch (e) {}
-  // Fallback для старых окружений
-  return text.length;
+  } catch (e) {
+    // нет прав на stat — считаем эстимейт
+  }
+  // Fallback: приблизительный размер UTF-8 строки (без создания массива)
+  // Кириллица = 2 байта, латиница = 1. Оцениваем как ~1.15× от длины.
+  return Math.round(textFallback.length * 1.15);
 }
 
 // -----------------------------------------------------
@@ -68,6 +78,7 @@ export interface OpenedProject {
 
 export async function readProjectFile(path: string): Promise<OpenedProject> {
   const text = await readTextFile(path);
+
   let raw: any;
   try {
     raw = JSON.parse(text);
@@ -121,13 +132,14 @@ export async function readProjectFile(path: string): Promise<OpenedProject> {
   }
 
   const stats = getProjectStats(project.tree, project.importedItems);
+  const sizeBytes = await safeFileSize(path, text);
 
   return {
     path: path,
     name: meta.title || cleanName,
     data: project,
     meta: meta,
-    sizeBytes: byteLength(text), // ⚡ байты
+    sizeBytes: sizeBytes,
     stats: stats,
   };
 }
@@ -167,9 +179,13 @@ export async function writeProjectFile(
     payload.importedItems = project.importedItems;
   }
 
-  const json = JSON.stringify(payload, null, 2);
+  // ⚡ N10: без отступов — для больших проектов это +40% к размеру
+  //   и 2-3× медленнее при записи. Если нужна читаемость — есть редакторы.
+  const json = JSON.stringify(payload);
   await writeTextFile(path, json);
-  return byteLength(json); // ⚡ байты
+
+  // ⚡ N11: точный размер с диска
+  return await safeFileSize(path, json);
 }
 
 // -----------------------------------------------------

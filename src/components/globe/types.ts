@@ -20,6 +20,8 @@ import type { ThemeColors } from '../../theme/types';
 export interface GlobeViewerProps {
   items: TreeItem[];
   importedItems: TreeItem[];
+  /** ⚡ previewOverrides (drag-позиции) применяются локально. */
+  previewOverrides: Record<string, Partial<any>>;
   clickMode: 'select' | 'add-marker' | 'measure';
   settings: AppSettings;
   colors: ThemeColors;

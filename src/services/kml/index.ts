@@ -12,6 +12,7 @@ export type { ImportOptions } from './parser';
 export {
   parseKmlDocumentToTree,
   countTreeItems,
+  countTreeItemsByType,
   buildKmlFolder,
 } from './parser';
 

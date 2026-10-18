@@ -81,6 +81,11 @@ export interface UseUIStateResult {
   clickMode: ClickMode;
   setClickMode: React.Dispatch<React.SetStateAction<ClickMode>>;
 
+  /**
+   * @deprecated Эти поля НЕ используются GlobeViewer — там источник
+   *   истины useMeasure. Оставлены только для совместимости с
+   *   performResetProject(). Не добавлять новых использований.
+   */
   measurePoints: MeasurePoint[];
   measureClosed: boolean;
   selectedMeasureIndex: number | null;
@@ -150,7 +155,6 @@ export interface UseUIStateResult {
   clearSelection: () => void;
   closeAllDialogs: () => void;
 
-  // === Константы (используются в App и useProjectOps) ===
   DEFAULT_CONFIRM: ConfirmState;
   DEFAULT_LOADING: LoadingState;
 }
@@ -163,16 +167,18 @@ export function useUIState(): UseUIStateResult {
   const [lastClickedId, setLastClickedId] = useState<string | null>(null);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [focusedFolderId, setFocusedFolderId] = useState<string | null>(null);
-  const [activeFolderId, setActiveFolderIdState] = useState<string>('root-folder');
+  const [activeFolderId, setActiveFolderIdState] =
+    useState<string>('root-folder');
   const [panelItemId, setPanelItemId] = useState<string | null>(null);
 
   const [clickMode, setClickMode] = useState<ClickMode>('select');
 
+  // @deprecated
   const [measurePoints, setMeasurePoints] = useState<MeasurePoint[]>([]);
   const [measureClosed, setMeasureClosed] = useState(false);
-  const [selectedMeasureIndex, setSelectedMeasureIndex] = useState<number | null>(
-    null
-  );
+  const [selectedMeasureIndex, setSelectedMeasureIndex] = useState<
+    number | null
+  >(null);
 
   const [clipboard, setClipboard] = useState<ClipboardData | null>(null);
 
@@ -209,7 +215,9 @@ export function useUIState(): UseUIStateResult {
 
   const [infoDialogId, setInfoDialogId] = useState<string | null>(null);
   const [moveDialogIds, setMoveDialogIds] = useState<string[] | null>(null);
-  const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
+  const [pendingImport, setPendingImport] = useState<PendingImport | null>(
+    null
+  );
   const [confirmDialog, setConfirmDialog] =
     useState<ConfirmState>(DEFAULT_CONFIRM);
 

@@ -26,6 +26,11 @@ import {
   DEFAULT_MAP_SOURCE,
 } from './map-sources';
 
+import {
+  readOverlaySettings,
+  DEFAULT_OVERLAY_SETTINGS,
+} from './overlay-sources';
+
 export type {
   MapSourceId,
   MapSourceSettings,
@@ -195,6 +200,21 @@ export const DEFAULT_MAP_CREATE_MENU: MapCreateMenuSettings = {
   autoActivateMode: true,
 };
 
+// -----------------------------------------------------
+// ⚡ НОВОЕ: Настройки импорта KML/KMZ
+// -----------------------------------------------------
+export interface ImportDefaults {
+  /** Скрывать импортированные объекты на глобусе */
+  startHidden: boolean;
+  /** Импортированные папки/файлы будут свёрнуты в дереве */
+  startCollapsed: boolean;
+}
+
+export const DEFAULT_IMPORT_DEFAULTS: ImportDefaults = {
+  startHidden: true,
+  startCollapsed: true,
+};
+
 export type SidebarOrder = 'imported-first' | 'tree-first';
 
 // -----------------------------------------------------
@@ -234,6 +254,9 @@ export interface AppSettings {
   measure: MeasureSettings;
 
   mapSource: MapSourceSettings;
+
+  /** ⚡ Поведение импорта KML/KMZ */
+  importDefaults: ImportDefaults;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -269,6 +292,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   mapCreateMenu: DEFAULT_MAP_CREATE_MENU,
   measure: DEFAULT_MEASURE_SETTINGS,
   mapSource: DEFAULT_MAP_SOURCE_SETTINGS,
+
+  importDefaults: DEFAULT_IMPORT_DEFAULTS,
 };
 
 // -----------------------------------------------------
@@ -285,17 +310,14 @@ function migrateMeasureSettings(raw: any): MeasureSettings {
 function migrateMapSourceSettings(raw: any): MapSourceSettings {
   const base: any = { ...DEFAULT_MAP_SOURCE_SETTINGS, ...(raw || {}) };
 
-  // legacy: старые поля верхнего уровня
   if (typeof raw?.baseLayer === 'string' && !raw?.mapSource) {
     base.baseLayer = raw.baseLayer;
   }
 
-  // Валидация countryFilter
   if (base.countryFilter !== 'russia' && base.countryFilter !== 'world') {
     base.countryFilter = 'russia';
   }
 
-  // Валидация customSources
   if (!Array.isArray(base.customSources)) {
     base.customSources = [];
   } else {
@@ -342,19 +364,29 @@ function migrateMapSourceSettings(raw: any): MapSourceSettings {
       });
   }
 
-  // ⚡ Если baseLayer больше не в списке (carto-dark, maptiler и т.д.) —
-  // и это не кастомный источник — сбросить на esri-imagery
+  base.overlays = readOverlaySettings(base.overlays);
+
   const isCustomActive = base.customSources.some(function (c: any) {
     return c.id === base.baseLayer;
   });
   if (!isKeptMapSource(base.baseLayer) && !isCustomActive) {
     console.log(
-      '[migrate] baseLayer "' + base.baseLayer + '" больше не поддерживается, сбрасываю на Esri'
+      '[migrate] baseLayer "' +
+        base.baseLayer +
+        '" больше не поддерживается, сбрасываю на Esri'
     );
     base.baseLayer = DEFAULT_MAP_SOURCE;
   }
 
   return base as MapSourceSettings;
+}
+
+function migrateImportDefaults(raw: any): ImportDefaults {
+  const base: any = { ...DEFAULT_IMPORT_DEFAULTS, ...(raw || {}) };
+  return {
+    startHidden: base.startHidden !== false,
+    startCollapsed: base.startCollapsed !== false,
+  };
 }
 
 // -----------------------------------------------------
@@ -391,8 +423,11 @@ export function mergeSettings(raw: any): AppSettings {
         baseLayer: raw.baseLayer,
       }
     ),
+    importDefaults: migrateImportDefaults(raw.importDefaults),
     recentProjects: Array.isArray(raw.recentProjects) ? raw.recentProjects : [],
   };
 }
+
+void DEFAULT_OVERLAY_SETTINGS;
 
 export type { MeasureRulerType };

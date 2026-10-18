@@ -1,6 +1,6 @@
 // =====================================================
 // src/services/project/stats.ts
-// Статистика проекта (количество объектов по типам)
+// Статистика проекта: leaf-объекты отдельно, контейнеры отдельно
 // =====================================================
 
 import type { TreeItem } from '../../types/base';
@@ -9,6 +9,11 @@ import type { ProjectStats } from '../../types/project';
 
 /**
  * Считает статистику по дереву проекта + импортированным.
+ *
+ * ⚡ totalItems — только leaf-объекты (place/line/poly/measure),
+ *   контейнеры (folders, kmlFiles) считаются отдельно.
+ *   Импортированные объекты ВХОДЯТ в totalItems (по типам),
+ *   а importedItems — это количество корней в importedItems.
  */
 export function getProjectStats(
   tree: TreeItem[],
@@ -28,13 +33,23 @@ export function getProjectStats(
   function walk(list: TreeItem[]) {
     list.forEach(function (item) {
       if (!item) return;
-      stats.totalItems++;
-      if (item.type === 'folder') stats.folders++;
-      else if (item.type === 'place') stats.places++;
-      else if (item.type === 'kmlline') stats.lines++;
-      else if (item.type === 'kmlpolygon') stats.polygons++;
-      else if (item.type === 'kmlfile') stats.kmlFiles++;
-      else if (item.type === 'measure') stats.measures++;
+      if (item.type === 'folder') {
+        stats.folders++;
+      } else if (item.type === 'place') {
+        stats.places++;
+        stats.totalItems++;
+      } else if (item.type === 'kmlline') {
+        stats.lines++;
+        stats.totalItems++;
+      } else if (item.type === 'kmlpolygon') {
+        stats.polygons++;
+        stats.totalItems++;
+      } else if (item.type === 'kmlfile') {
+        stats.kmlFiles++;
+      } else if (item.type === 'measure') {
+        stats.measures++;
+        stats.totalItems++;
+      }
       if (isContainer(item)) walk(item.children);
     });
   }
@@ -43,6 +58,8 @@ export function getProjectStats(
 
   if (importedItems && importedItems.length > 0) {
     stats.importedItems = importedItems.length;
+    // ⚡ Leaf-объекты из импортированных тоже считаются
+    walk(importedItems);
   }
 
   return stats;

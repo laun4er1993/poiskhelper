@@ -1,6 +1,6 @@
 // =====================================================
 // src/components/globe/CustomMapSourceDialog.tsx
-// Диалог добавления/редактирования своей карты
+// Диалог добавления/редактирования своей карты — респонсивный
 // =====================================================
 
 import { useState, useEffect } from 'react';
@@ -13,6 +13,28 @@ interface CustomMapSourceDialogProps {
   onSave: (source: Omit<CustomMapSource, 'id' | 'addedAt'>) => void;
   onImportXml: (xml: string) => void;
   onClose: () => void;
+}
+
+function useWindowWidth(): number {
+  const [w, setW] = useState(function () {
+    return typeof window !== 'undefined' ? window.innerWidth : 1024;
+  });
+  useEffect(function () {
+    let raf: number | null = null;
+    const update = function () {
+      if (raf !== null) return;
+      raf = window.requestAnimationFrame(function () {
+        raf = null;
+        setW(window.innerWidth);
+      });
+    };
+    window.addEventListener('resize', update);
+    return function () {
+      window.removeEventListener('resize', update);
+      if (raf !== null) window.cancelAnimationFrame(raf);
+    };
+  }, []);
+  return w;
 }
 
 function CustomMapSourceDialog({
@@ -32,6 +54,10 @@ function CustomMapSourceDialog({
   const [xmlText, setXmlText] = useState('');
   const [showXml, setShowXml] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const windowWidth = useWindowWidth();
+  const isNarrow = windowWidth < 640;
+  const isVeryNarrow = windowWidth < 400;
 
   useEffect(
     function () {
@@ -100,9 +126,23 @@ function CustomMapSourceDialog({
     setShowXml(false);
   };
 
+  const modalWidth = isVeryNarrow
+    ? '100vw'
+    : Math.min(520, windowWidth - 24);
+
   return (
     <div style={styles.backdrop} onClick={onClose}>
-      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+      <div
+        style={{
+          ...styles.modal,
+          width: modalWidth,
+          maxHeight: isVeryNarrow ? '100vh' : 'calc(100vh - 24px)',
+          borderRadius: isVeryNarrow ? 0 : 'var(--radius)',
+        }}
+        onClick={function (e) {
+          e.stopPropagation();
+        }}
+      >
         <div style={styles.header}>
           <LinkIcon size={16} color="var(--accent)" />
           <span style={styles.title}>
@@ -113,7 +153,12 @@ function CustomMapSourceDialog({
           </button>
         </div>
 
-        <div style={styles.content}>
+        <div
+          style={{
+            ...styles.content,
+            padding: isNarrow ? '12px 14px' : '16px 20px',
+          }}
+        >
           {error && (
             <div style={styles.errorBox}>
               <AlertTriangle size={14} />
@@ -121,7 +166,6 @@ function CustomMapSourceDialog({
             </div>
           )}
 
-          {/* Переключатель режимов */}
           <div style={styles.tabs}>
             <button
               style={{
@@ -143,7 +187,7 @@ function CustomMapSourceDialog({
                 setShowXml(true);
               }}
             >
-              Импорт XML (Locus)
+              Импорт XML
             </button>
           </div>
 
@@ -179,7 +223,12 @@ function CustomMapSourceDialog({
                 </div>
               </div>
 
-              <div style={styles.row}>
+              <div
+                style={{
+                  ...styles.row,
+                  flexDirection: isVeryNarrow ? 'column' : 'row',
+                }}
+              >
                 <div style={styles.col}>
                   <label style={styles.label}>Мин. зум</label>
                   <input
@@ -221,7 +270,12 @@ function CustomMapSourceDialog({
                 />
               </div>
 
-              <div style={styles.row}>
+              <div
+                style={{
+                  ...styles.row,
+                  flexDirection: isVeryNarrow ? 'column' : 'row',
+                }}
+              >
                 <div style={styles.col}>
                   <label style={styles.label}>Категория</label>
                   <select
@@ -264,7 +318,7 @@ function CustomMapSourceDialog({
                     setXmlText(e.target.value);
                   }}
                   style={styles.textarea}
-                  rows={10}
+                  rows={isNarrow ? 6 : 10}
                   placeholder={'<?xml version="1.0"?>\n<providers>\n  <provider>\n    <name>Моя карта</name>\n    <url><![CDATA[https://.../{z}/{x}/{y}.png]]></url>\n    <zoomMax>19</zoomMax>\n  </provider>\n</providers>'}
                   spellCheck={false}
                 />
@@ -277,7 +331,12 @@ function CustomMapSourceDialog({
           )}
         </div>
 
-        <div style={styles.footer}>
+        <div
+          style={{
+            ...styles.footer,
+            ...(isVeryNarrow ? styles.footerWrap : {}),
+          }}
+        >
           <button style={styles.cancelBtn} onClick={onClose}>
             Отмена
           </button>
@@ -313,8 +372,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   modal: {
     width: 520,
-    maxWidth: '94vw',
-    maxHeight: '92vh',
+    maxWidth: 'calc(100vw - 24px)',
+    maxHeight: 'calc(100vh - 24px)',
     backgroundColor: 'var(--bg-modal)',
     border: '1px solid var(--border)',
     borderRadius: 'var(--radius)',
@@ -335,7 +394,15 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 8,
     flexShrink: 0,
   },
-  title: { flex: 1, fontSize: 14, fontWeight: 600 },
+  title: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: 600,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    minWidth: 0,
+  },
   closeBtn: {
     width: 28,
     height: 28,
@@ -347,14 +414,17 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 'var(--radius-small)',
     color: 'var(--text-secondary)',
     cursor: 'pointer',
+    flexShrink: 0,
   },
   content: {
     flex: 1,
     overflowY: 'auto',
+    overflowX: 'hidden',
     padding: '16px 20px',
     display: 'flex',
     flexDirection: 'column',
     gap: 10,
+    minHeight: 0,
   },
   errorBox: {
     display: 'flex',
@@ -388,6 +458,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontFamily: 'inherit',
     transition: 'all 0.15s',
+    whiteSpace: 'nowrap',
   },
   tabBtnActive: {
     backgroundColor: 'var(--accent)',
@@ -424,9 +495,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'Consolas, monospace',
     resize: 'vertical',
     boxSizing: 'border-box',
+    minHeight: 100,
   },
   row: { display: 'flex', gap: 10 },
-  col: { flex: 1, display: 'flex', flexDirection: 'column', gap: 4 },
+  col: { flex: 1, display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 },
   colorInput: {
     width: '100%',
     height: 32,
@@ -454,6 +526,11 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 8,
     flexShrink: 0,
   },
+  footerWrap: {
+    height: 'auto',
+    padding: '10px 12px',
+    flexWrap: 'wrap',
+  },
   cancelBtn: {
     padding: '7px 16px',
     backgroundColor: 'transparent',
@@ -463,6 +540,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12.5,
     cursor: 'pointer',
     fontFamily: 'inherit',
+    whiteSpace: 'nowrap',
   },
   saveBtn: {
     display: 'flex',
@@ -477,6 +555,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     cursor: 'pointer',
     fontFamily: 'inherit',
+    whiteSpace: 'nowrap',
   },
 };
 

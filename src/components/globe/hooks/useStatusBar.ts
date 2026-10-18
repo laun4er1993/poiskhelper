@@ -1,6 +1,6 @@
 // =====================================================
 // src/components/globe/hooks/useStatusBar.ts
-// Обновление статус-бара: мышь, камера, масштаб
+// Обновление статус-бара + requestRender при движении камеры
 // =====================================================
 
 import { useEffect, useRef, useState } from 'react';
@@ -8,18 +8,12 @@ import * as Cesium from 'cesium';
 import type { StatusBarData } from '../../status-bar/types';
 import { EVT_MOUSE_MOVE } from '../constants';
 
-// =====================================================
-// === Пропсы ===
-// =====================================================
 interface UseStatusBarParams {
   viewerRef: React.MutableRefObject<Cesium.Viewer | null>;
   viewerReady: boolean;
   onStatusUpdate: (data: StatusBarData) => void;
 }
 
-// =====================================================
-// === Результат ===
-// =====================================================
 export interface UseStatusBarResult {
   heading: number;
   cameraHeight: number;
@@ -27,9 +21,10 @@ export interface UseStatusBarResult {
   fps: number;
 }
 
-// =====================================================
-// === Хук ===
-// =====================================================
+const TICK_MS = 500;
+const MOUSE_THROTTLE_MS = 150;
+const IDLE_MS = 1500;
+
 export function useStatusBar({
   viewerRef,
   viewerReady,
@@ -48,9 +43,7 @@ export function useStatusBar({
     [onStatusUpdate]
   );
 
-  // =====================================================
-  // === Периодический интервал: compass + statusbar ===
-  // =====================================================
+  // Единый тикер: компас + высота камеры + FPS
   useEffect(
     function () {
       if (!viewerReady) return;
@@ -59,7 +52,6 @@ export function useStatusBar({
         const v = viewerRef.current;
         if (!v || v.isDestroyed()) return;
 
-        // Азимут
         const newHeading = Math.round(
           Cesium.Math.toDegrees(v.camera.heading)
         );
@@ -67,41 +59,28 @@ export function useStatusBar({
           return prev === newHeading ? prev : newHeading;
         });
 
-        // Высота камеры
         const newH = Math.round(v.camera.positionCartographic.height);
         setCameraHeight(function (prev) {
           return prev === newH ? prev : newH;
         });
 
-        // FPS
         const scene = v.scene;
-        if (scene && scene.fps) {
+        if (scene && typeof scene.fps === 'number') {
           const newFps = Math.round(scene.fps);
           setFps(function (prev) {
             return prev === newFps ? prev : newFps;
           });
         }
-
-        updatePopupPosition(v);
-        updateCreateMenuPosition(v);
-      }, 200);
+      }, TICK_MS);
 
       return function () {
         window.clearInterval(id);
       };
-      // eslint-disable-next-line
     },
     [viewerReady, viewerRef]
   );
 
-  // Заглушки — переопределяются снаружи через props/ref
-  // (используются до момента, когда появятся реальные колбэки)
-  const updatePopupPosition = function (_viewer: Cesium.Viewer) {};
-  const updateCreateMenuPosition = function (_viewer: Cesium.Viewer) {};
-
-  // =====================================================
-  // === Обработчик движения мыши ===
-  // =====================================================
+  // Мышь + requestRender
   useEffect(
     function () {
       if (!viewerReady) return;
@@ -112,8 +91,6 @@ export function useStatusBar({
 
       let lastUpdate = 0;
       let lastMouseTime = 0;
-      const UPDATE_MS = 150;
-      const IDLE_MS = 1500;
       let lastKey = '';
 
       const emit = function (
@@ -125,6 +102,7 @@ export function useStatusBar({
         if (!v || v.isDestroyed()) return;
         const camera = v.camera;
         const carto = camera.positionCartographic;
+
         let scale = 0;
         const canvasHeight = v.scene.canvas ? v.scene.canvas.clientHeight : 1;
         const frustum = camera.frustum;
@@ -133,15 +111,28 @@ export function useStatusBar({
           const visible = 2 * distance * Math.tan(frustum.fovy / 2);
           scale = (visible / canvasHeight) * 100;
         }
-        setScaleMeters(scale);
+        setScaleMeters(function (prev) {
+          return prev === scale ? prev : scale;
+        });
 
-        const headingDeg = Math.round(Cesium.Math.toDegrees(camera.heading));
+        const headingDeg = Math.round(
+          Cesium.Math.toDegrees(camera.heading)
+        );
         const camHeight = Math.round(carto.height);
+
         const key =
-          (lat === null ? 'n' : lat.toFixed(5)) + '|' +
-          (lon === null ? 'n' : lon.toFixed(5)) + '|' +
-          (h === null ? 'n' : Math.round(h)) + '|' +
-          headingDeg + '|' + camHeight + '|' + Math.round(scale);
+          (lat === null ? 'n' : lat.toFixed(5)) +
+          '|' +
+          (lon === null ? 'n' : lon.toFixed(5)) +
+          '|' +
+          (h === null ? 'n' : Math.round(h)) +
+          '|' +
+          headingDeg +
+          '|' +
+          camHeight +
+          '|' +
+          Math.round(scale);
+
         if (key === lastKey) return;
         lastKey = key;
 
@@ -159,18 +150,22 @@ export function useStatusBar({
       const onMouseMove = function (movement: any) {
         const now = performance.now();
         lastMouseTime = now;
-        if (now - lastUpdate < UPDATE_MS) return;
+        if (now - lastUpdate < MOUSE_THROTTLE_MS) return;
         lastUpdate = now;
+
         const v = viewerRef.current;
         if (!v || v.isDestroyed()) return;
         const position = movement.endPosition;
         const scene = v.scene;
+
         let cartesian: any = null;
         const ray = v.camera.getPickRay(position);
         if (ray) cartesian = scene.globe.pick(ray, scene) || null;
         if (!cartesian) {
-          cartesian = v.camera.pickEllipsoid(position, scene.globe.ellipsoid) || null;
+          cartesian =
+            v.camera.pickEllipsoid(position, scene.globe.ellipsoid) || null;
         }
+
         if (cartesian) {
           const carto = Cesium.Cartographic.fromCartesian(cartesian);
           emit(
@@ -181,11 +176,22 @@ export function useStatusBar({
         } else {
           emit(null, null, null);
         }
+
+        // ⚡ Не рендерим тут — рендер уже идёт от camera.changed
+        //   (в useCesiumViewer) при движении камеры. Мышь по карте
+        //   сама по себе рендер не требует — только обновление статусбара.
       };
 
       const onCameraChanged = function () {
+        const v = viewerRef.current;
+        if (v && !v.isDestroyed()) {
+          try {
+            v.scene.requestRender();
+          } catch (e) {}
+        }
+
         const now = performance.now();
-        if (now - lastUpdate < UPDATE_MS) return;
+        if (now - lastUpdate < MOUSE_THROTTLE_MS) return;
         lastUpdate = now;
         emit(null, null, null);
       };

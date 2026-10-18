@@ -3,6 +3,8 @@
 // Каталог источников карт — только бесплатные
 // =====================================================
 
+import type { OverlaySettings } from './overlay-sources';
+
 export type BuiltInMapSourceId =
   | 'esri-imagery'
   | 'esri-wayback'
@@ -329,6 +331,8 @@ export interface MapSourceSettings {
   baseLayerContrast: number;
   countryFilter: CountryFilter;
   customSources: CustomMapSource[];
+  /** ⚡ Наложения поверх базового слоя (только для спутника) */
+  overlays: OverlaySettings;
 }
 
 export const DEFAULT_MAP_SOURCE_SETTINGS: MapSourceSettings = {
@@ -339,4 +343,5 @@ export const DEFAULT_MAP_SOURCE_SETTINGS: MapSourceSettings = {
   baseLayerContrast: 1,
   countryFilter: 'russia',
   customSources: [],
+  overlays: { roads: false, reference: false, labels: false },
 };

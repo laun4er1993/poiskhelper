@@ -1,9 +1,9 @@
 // =====================================================
 // src/components/sidebar/Sidebar.tsx
-// Левая панель: поиск + «Добавленные» + «Мои объекты» + массовые
+// Левая панель — с новым поиском и React.memo
 // =====================================================
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, memo } from 'react';
 import { Breadcrumbs } from '../breadcrumbs';
 import ProjectHeader from './ProjectHeader';
 import SidebarSearch from './SidebarSearch';
@@ -43,6 +43,8 @@ function Sidebar(props: SidebarProps) {
     settings,
     onWidthChange,
     onSearch,
+    onSelectGeocodeResult,
+    viewerRef,
     onSelect,
     onToggleVisible,
     onSetVisibleCascade,
@@ -82,15 +84,9 @@ function Sidebar(props: SidebarProps) {
   const [treeOpen, setTreeOpen] = useState(true);
   const [resizing, setResizing] = useState(false);
 
-  // =====================================================
-  // === State редактирования (имени) ===
-  // =====================================================
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
 
-  // =====================================================
-  // === Контекстное меню (рендерится один раз здесь) ===
-  // =====================================================
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(
     getContextMenu()
   );
@@ -110,9 +106,6 @@ function Sidebar(props: SidebarProps) {
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
 
-  // =====================================================
-  // === Resize ===
-  // =====================================================
   useEffect(
     function () {
       if (!resizing) return;
@@ -149,9 +142,6 @@ function Sidebar(props: SidebarProps) {
     setResizing(true);
   };
 
-  // =====================================================
-  // === Редактирование имени ===
-  // =====================================================
   const handleEditValueChange = function (value: string) {
     setEditValue(value);
   };
@@ -175,9 +165,6 @@ function Sidebar(props: SidebarProps) {
     closeContextMenu();
   };
 
-  // =====================================================
-  // === Расчётные значения ===
-  // =====================================================
   const selectedCount = selectedIds.length;
   const isRootView = !focusedFolderId || focusedFolderId === 'root-folder';
   const hasImported = importedItems.length > 0;
@@ -201,9 +188,6 @@ function Sidebar(props: SidebarProps) {
     onAddPlace(targetFolderId);
   };
 
-  // =====================================================
-  // === Общие пропсы для TreeView ===
-  // =====================================================
   const treeCommon = {
     settings,
     selectedIds,
@@ -249,9 +233,6 @@ function Sidebar(props: SidebarProps) {
     clipboardOperation,
   };
 
-  // =====================================================
-  // === Порядок модулей ===
-  // =====================================================
   const isImportedFirst = settings.sidebarOrder !== 'tree-first';
 
   const importedModule = hasImported ? (
@@ -288,9 +269,6 @@ function Sidebar(props: SidebarProps) {
     />
   );
 
-  // =====================================================
-  // === Items для контекстного меню ===
-  // =====================================================
   const allItemsForMenu = tree.concat(importedItems);
 
   return (
@@ -309,7 +287,11 @@ function Sidebar(props: SidebarProps) {
         />
       )}
 
-      <SidebarSearch onSearch={onSearch} />
+      <SidebarSearch
+        onSearch={onSearch}
+        onSelectGeocodeResult={onSelectGeocodeResult}
+        viewerRef={viewerRef}
+      />
 
       {isImportedFirst ? (
         <>
@@ -339,9 +321,6 @@ function Sidebar(props: SidebarProps) {
         />
       )}
 
-      {/* ============================================ */}
-      {/* КОНТЕКСТНОЕ МЕНЮ (единственный инстанс)      */}
-      {/* ============================================ */}
       {contextMenu && (
         <TreeContextMenu
           x={contextMenu.x}
@@ -393,9 +372,6 @@ function Sidebar(props: SidebarProps) {
   );
 }
 
-// =====================================================
-// === Стили ===
-// =====================================================
 const styles: Record<string, React.CSSProperties> = {
   sidebar: {
     height: '100%',
@@ -425,4 +401,4 @@ const styles: Record<string, React.CSSProperties> = {
   },
 };
 
-export default Sidebar;
+export default memo(Sidebar);

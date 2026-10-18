@@ -1,6 +1,7 @@
 // =====================================================
 // src/services/kml/parser.ts
-// Парсинг KML-документа в дерево объектов
+// Парсинг KML → дерево объектов
+// + startCollapsed для папок
 // =====================================================
 
 import type {
@@ -15,11 +16,17 @@ import type {
 } from '../../types/base';
 import { MEASURE_RULERS } from '../../types/measure';
 
-// =====================================================
-// === Утилиты ===
-// =====================================================
+const MAX_DESCRIPTION_LENGTH = 1000;
+const MAX_NOTE_LENGTH = 500;
+
 function genId(): string {
   return 'kml-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+}
+
+function truncate(text: string, max: number): string {
+  if (!text) return '';
+  if (text.length <= max) return text;
+  return text.slice(0, max) + '…';
 }
 
 function kmlColorToCss(kmlColor: string): { css: string; alpha: number } {
@@ -85,15 +92,42 @@ function parseAltitudeMode(
   if (!modeEl) {
     modeEl = firstDirect(placemark, 'altitudeMode');
   }
-  const modeText = textOf(modeEl).toLowerCase();
+  let modeText = textOf(modeEl).toLowerCase();
+
+  if (!modeText) {
+    const gxModeEl = firstDirect(placemark, 'gx:altitudeMode');
+    if (gxModeEl) modeText = textOf(gxModeEl).toLowerCase();
+  }
+
   if (modeText === 'absolute') return 'absolute';
   if (modeText === 'relativetoground') return 'relativeToGround';
   return 'clampToGround';
 }
 
-// =====================================================
-// === Стили ===
-// =====================================================
+function parseGxTrack(
+  el: Element
+): Array<{ lat: number; lon: number; height: number }> {
+  const coords = el.getElementsByTagNameNS('*', 'coord');
+  const result: Array<{ lat: number; lon: number; height: number }> = [];
+  for (let i = 0; i < coords.length; i++) {
+    const text = (coords[i].textContent || '').trim();
+    if (!text) continue;
+    const parts = text.split(/\s+/);
+    if (parts.length < 2) continue;
+    const lon = parseFloat(parts[0]);
+    const lat = parseFloat(parts[1]);
+    const height = parts.length >= 3 ? parseFloat(parts[2]) : 0;
+    if (isFinite(lon) && isFinite(lat)) {
+      result.push({
+        lat,
+        lon,
+        height: isFinite(height) ? height : 0,
+      });
+    }
+  }
+  return result;
+}
+
 function collectStyles(doc: Document): Record<string, Element> {
   const result: Record<string, Element> = {};
 
@@ -230,7 +264,7 @@ function resolveStyle(
 function extractDescription(placemark: Element): string {
   const desc = textOf(firstDirect(placemark, 'description'));
   const extData = firstDirect(placemark, 'ExtendedData');
-  if (!extData) return desc;
+  if (!extData) return truncate(desc, MAX_DESCRIPTION_LENGTH);
 
   const parts: string[] = [];
   if (desc) parts.push(desc);
@@ -241,12 +275,12 @@ function extractDescription(placemark: Element): string {
     const value = textOf(firstDirect(dataEls[i], 'value'));
     if (name && value) parts.push(name + ': ' + value);
   }
-  return parts.join('\n');
+  return truncate(parts.join('\n'), MAX_DESCRIPTION_LENGTH);
 }
 
-// =====================================================
-// === Опции импорта ===
-// =====================================================
+// -----------------------------------------------------
+// Опции импорта
+// -----------------------------------------------------
 export interface ImportOptions {
   color: string;
   pixelSize: number;
@@ -256,6 +290,8 @@ export interface ImportOptions {
   showHidden: boolean;
   importLinesAsMeasures?: boolean;
   defaultRulerType?: 'path' | 'area';
+  /** ⚡ Свернуть папки после импорта */
+  startCollapsed?: boolean;
 }
 
 function makeDefaultStyle(options: ImportOptions): ParsedStyle {
@@ -272,9 +308,6 @@ function makeDefaultStyle(options: ImportOptions): ParsedStyle {
   };
 }
 
-// =====================================================
-// === Парсинг геометрии ===
-// =====================================================
 function parseGeometryElement(
   child: Element,
   name: string,
@@ -316,47 +349,17 @@ function parseGeometryElement(
     if (coords.length >= 2) {
       const altitudeMode = parseAltitudeMode(placemark, child);
       if (options.importLinesAsMeasures) {
-        const rulerType = options.defaultRulerType || 'path';
-        out.push({
-          id: genId(),
-          name,
-          type: 'measure',
-          rulerType,
-          visible: visibleFlag,
-          positions: coords,
-          closed: false,
-
-          // Линия
-          color: style.color,
-          width: style.width || 2,
-          lineOpacity: 0.55,
-          lineDash: 'solid',
-
-          // Точки
-          pointShape: 'double-circle',
-          pointSize: 11,
-          pointOpacity: 1,
-          pointFillColor: '#ffffff',
-          pointOutlineColor: style.color,
-          pointOutlineWidth: 2,
-
-          // Цифры
-          showNumbers: true,
-          numberFontSize: 11,
-          numberColor: '#000000',
-          numberOutlineColor: '#ffffff',
-          numberOutlineWidth: 1,
-          numberStyle: 'fill-and-outline',
-
-          // Подписи
-          showHeights: false,
-          showSegmentLengths: true,
-          showAzimuths: true,
-          highlightEndpoints: true,
-
-          description,
-          createdAt: now,
-        } as MeasureItem);
+        out.push(
+          buildMeasureFromCoords(
+            coords,
+            name,
+            visibleFlag,
+            style,
+            description,
+            now,
+            options
+          )
+        );
       } else {
         out.push({
           id: genId(),
@@ -378,7 +381,9 @@ function parseGeometryElement(
     if (outer) ring = firstDirect(outer, 'LinearRing');
     if (!ring) ring = firstDirect(child, 'LinearRing');
     if (ring) {
-      const coords = parseCoordinates(textOf(firstDirect(ring, 'coordinates')));
+      const coords = parseCoordinates(
+        textOf(firstDirect(ring, 'coordinates'))
+      );
       if (coords.length >= 3) {
         const altitudeMode = parseAltitudeMode(placemark, child);
         out.push({
@@ -411,7 +416,82 @@ function parseGeometryElement(
         placemark
       );
     }
+  } else if (tag === 'track') {
+    const coords = parseGxTrack(child);
+    if (coords.length >= 2) {
+      const altitudeMode = parseAltitudeMode(placemark, child);
+      out.push({
+        id: genId(),
+        name,
+        type: 'kmlline',
+        visible: visibleFlag,
+        positions: coords,
+        altitudeMode,
+        color: style.color,
+        width: style.width,
+        description,
+        createdAt: now,
+      } as KmlLine);
+    }
+  } else if (tag === 'multitrack') {
+    const tracks = child.getElementsByTagNameNS('*', 'Track');
+    for (let i = 0; i < tracks.length; i++) {
+      parseGeometryElement(
+        tracks[i],
+        name,
+        visibleFlag,
+        style,
+        description,
+        now,
+        out,
+        options,
+        placemark
+      );
+    }
   }
+}
+
+function buildMeasureFromCoords(
+  coords: Array<{ lat: number; lon: number; height: number }>,
+  name: string,
+  visibleFlag: boolean,
+  style: ParsedStyle,
+  description: string,
+  now: string,
+  options: ImportOptions
+): MeasureItem {
+  const rulerType = options.defaultRulerType || 'path';
+  return {
+    id: genId(),
+    name,
+    type: 'measure',
+    rulerType,
+    visible: visibleFlag,
+    positions: coords,
+    closed: false,
+    color: style.color,
+    width: style.width || 2,
+    lineOpacity: 0.7,
+    lineDash: 'solid',
+    pointShape: 'double-circle',
+    pointSize: 14,
+    pointOpacity: 1,
+    pointFillColor: '#ffffff',
+    pointOutlineColor: style.color || '#1a1a1a',
+    pointOutlineWidth: 2,
+    showNumbers: true,
+    numberFontSize: 10,
+    numberColor: '#1a1a1a',
+    numberOutlineColor: '#ffffff',
+    numberOutlineWidth: 1,
+    numberStyle: 'fill-and-outline',
+    showHeights: false,
+    showSegmentLengths: true,
+    showAzimuths: true,
+    highlightEndpoints: false,
+    description,
+    createdAt: now,
+  } as MeasureItem;
 }
 
 function parsePlacemark(
@@ -430,25 +510,17 @@ function parsePlacemark(
   const now = new Date().toISOString();
   const items: TreeItem[] = [];
 
-  const point = firstDirect(placemark, 'Point');
-  if (point) {
-    parseGeometryElement(point, name, visibleFlag, style, description, now, items, options, placemark);
-  }
-
-  const lineString = firstDirect(placemark, 'LineString');
-  if (lineString) {
-    parseGeometryElement(lineString, name, visibleFlag, style, description, now, items, options, placemark);
-  }
-
-  const polygon = firstDirect(placemark, 'Polygon');
-  if (polygon) {
-    parseGeometryElement(polygon, name, visibleFlag, style, description, now, items, options, placemark);
-  }
-
-  const multi = firstDirect(placemark, 'MultiGeometry');
-  if (multi) {
-    const children = Array.from(multi.children);
-    for (let i = 0; i < children.length; i++) {
+  const children = Array.from(placemark.children);
+  for (let i = 0; i < children.length; i++) {
+    const tag = children[i].tagName.toLowerCase();
+    if (
+      tag === 'point' ||
+      tag === 'linestring' ||
+      tag === 'polygon' ||
+      tag === 'multigeometry' ||
+      tag === 'track' ||
+      tag === 'multitrack'
+    ) {
       parseGeometryElement(
         children[i],
         name,
@@ -487,30 +559,53 @@ function parseContainer(
         (tag === 'folder' ? 'Папка' : 'Документ');
       const visibleText = textOf(firstDirect(child, 'visibility'));
       const isVisible = visibleText !== '0';
+      const openText = textOf(firstDirect(child, 'open'));
+      const isOpen = openText !== '0';
+      const folderDesc = truncate(
+        textOf(firstDirect(child, 'description')),
+        MAX_NOTE_LENGTH
+      );
+
       const subChildren = parseContainer(child, options, styles);
 
       if (subChildren.length > 0) {
+        // ⚡ startCollapsed — все папки свёрнуты
+        const expanded = options.startCollapsed ? false : isOpen;
+
         const folder: Folder = {
           id: genId(),
           name,
           type: 'folder',
           visible: options.visible && (options.showHidden || isVisible),
-          expanded: true,
+          expanded,
           children: subChildren,
           sortField: 'manual',
           sortOrder: 'asc',
+          note: folderDesc || undefined,
         };
         result.push(folder);
       }
+    } else if (tag === 'networklink') {
+      const name =
+        textOf(firstDirect(child, 'name')) || 'NetworkLink';
+      const href = textOf(
+        firstDirect(
+          firstDirect(child, 'Link') || child,
+          'href'
+        )
+      );
+      console.warn(
+        '[parser] NetworkLink "' +
+          name +
+          '" пропущен (внешний KML не загружается):',
+        href || '(нет href)'
+      );
     }
   }
 
   return result;
 }
 
-// =====================================================
-// === Публичные функции ===
-// =====================================================
 export function countTreeItems(items: TreeItem[]): number {
   if (!Array.isArray(items)) return 0;
   let n = 0;
@@ -525,17 +620,54 @@ export function countTreeItems(items: TreeItem[]): number {
   return n;
 }
 
+export function countTreeItemsByType(items: TreeItem[]): {
+  total: number;
+  places: number;
+  lines: number;
+  polygons: number;
+  measures: number;
+  folders: number;
+} {
+  let total = 0;
+  let places = 0;
+  let lines = 0;
+  let polygons = 0;
+  let measures = 0;
+  let folders = 0;
+
+  function walk(list: TreeItem[]) {
+    for (let i = 0; i < list.length; i++) {
+      const it = list[i];
+      if (!it) continue;
+      total++;
+      if (it.type === 'place') places++;
+      else if (it.type === 'kmlline') lines++;
+      else if (it.type === 'kmlpolygon') polygons++;
+      else if (it.type === 'measure') measures++;
+      else if (it.type === 'folder' || it.type === 'kmlfile') {
+        folders++;
+        walk((it as Folder | KmlFile).children);
+      }
+    }
+  }
+  walk(items);
+
+  return { total, places, lines, polygons, measures, folders };
+}
+
 export function parseKmlDocumentToTree(
   doc: Document,
   options: ImportOptions,
   fileName: string
 ): TreeItem[] {
+  console.log('[parser] старт, файл:', fileName);
+
   const styles = collectStyles(doc);
-  console.log('parseKmlDocumentToTree: styles найдено =', Object.keys(styles).length);
+  console.log('[parser] найдено стилей:', Object.keys(styles).length);
 
   const root = doc.documentElement;
   if (!root) {
-    console.warn('parseKmlDocumentToTree: нет корневого элемента');
+    console.warn('[parser] нет корневого элемента');
     return [];
   }
 
@@ -544,21 +676,24 @@ export function parseKmlDocumentToTree(
   const docEl = firstDirect(root, 'Document');
   if (docEl) {
     children = parseContainer(docEl, options, styles);
-  } else if (
-    root.tagName.toLowerCase() === 'document' ||
-    root.tagName.toLowerCase() === 'folder'
-  ) {
-    children = parseContainer(root, options, styles);
   } else {
     children = parseContainer(root, options, styles);
   }
 
+  const byType = countTreeItemsByType(children);
   console.log(
-    'parseKmlDocumentToTree: результат =',
-    children.length,
-    'корневых, всего',
-    countTreeItems(children),
-    'объектов'
+    '[parser] результат: total=' +
+      byType.total +
+      ', place=' +
+      byType.places +
+      ', line=' +
+      byType.lines +
+      ', poly=' +
+      byType.polygons +
+      ', measure=' +
+      byType.measures +
+      ', folders=' +
+      byType.folders
   );
 
   return children;
@@ -567,14 +702,15 @@ export function parseKmlDocumentToTree(
 export function buildKmlFolder(
   fileName: string,
   children: TreeItem[],
-  visible: boolean
+  visible: boolean,
+  expanded: boolean = true
 ): KmlFile {
   return {
     id: genId(),
     name: fileName,
     type: 'kmlfile',
     visible: visible,
-    expanded: true,
+    expanded: expanded,
     children: children,
     sourceFile: fileName,
     importedAt: new Date().toISOString(),

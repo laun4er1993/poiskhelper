@@ -7,12 +7,9 @@ import type { TreeItem, Place } from '../../types/base';
 import type { SortField, SortOrder, DesignSettings } from '../../types/base';
 import type { AppSettings } from '../../types/settings';
 import type { SelectMode } from '../tree/types';
+import type { GeocodeResult } from '../../services/geocoding';
 
-// -----------------------------------------------------
-// Пропсы Sidebar
-// -----------------------------------------------------
 export interface SidebarProps {
-  // Данные
   tree: TreeItem[];
   importedItems: TreeItem[];
   selectedIds: string[];
@@ -29,9 +26,9 @@ export interface SidebarProps {
   design: DesignSettings;
   settings: AppSettings;
 
-  // UI-колбэки
   onWidthChange: (width: number) => void;
   onSearch: (query: string) => void;
+  onSelectGeocodeResult: (result: GeocodeResult) => void;
   onSelect: (id: string, mode: SelectMode) => void;
   onToggleVisible: (id: string) => void;
   onSetVisibleCascade: (id: string, value: boolean) => void;
@@ -65,17 +62,10 @@ export interface SidebarProps {
 
   onMoveAllImported: () => void;
   onCollapseAll: () => void;
-
-  /** Смена порядка модулей «Добавленные» / «Мои объекты» */
   onToggleSidebarOrder: () => void;
-
-  /** Открыть правую панель редактирования */
   onEditItem: (item: TreeItem) => void;
 }
 
-// -----------------------------------------------------
-// Заголовок проекта
-// -----------------------------------------------------
 export interface ProjectHeaderProps {
   projectName: string;
   logsCount: number;
@@ -83,16 +73,12 @@ export interface ProjectHeaderProps {
   onOpenLogs: () => void;
 }
 
-// -----------------------------------------------------
-// Поиск
-// -----------------------------------------------------
 export interface SidebarSearchProps {
   onSearch: (query: string) => void;
+  onSelectGeocodeResult: (result: GeocodeResult) => void;
+  viewerRef?: React.MutableRefObject<any>;
 }
 
-// -----------------------------------------------------
-// Модуль «Добавленные»
-// -----------------------------------------------------
 export interface ImportedModuleProps {
   importedItems: TreeItem[];
   open: boolean;
@@ -101,9 +87,6 @@ export interface ImportedModuleProps {
   treeCommon: any;
 }
 
-// -----------------------------------------------------
-// Модуль «Мои объекты»
-// -----------------------------------------------------
 export interface TreeModuleProps {
   tree: TreeItem[];
   placesCount: number;
@@ -120,9 +103,6 @@ export interface TreeModuleProps {
   treeCommon: any;
 }
 
-// -----------------------------------------------------
-// Bulk panel
-// -----------------------------------------------------
 export interface BulkPanelProps {
   selectedIds: string[];
   onClearSelection: () => void;
@@ -135,8 +115,5 @@ export interface BulkPanelProps {
   onDeleteMultiple: (ids: string[]) => void;
 }
 
-// -----------------------------------------------------
-// Константы
-// -----------------------------------------------------
 export const MIN_SIDEBAR_WIDTH = 240;
 export const MAX_SIDEBAR_WIDTH = 700;

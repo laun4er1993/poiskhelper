@@ -11,6 +11,7 @@ import {
   Palette,
   Ruler,
   AlertTriangle,
+  FolderTree,
 } from 'lucide-react';
 import type { ImportOptions, ImportDialogProps } from './types';
 
@@ -25,23 +26,27 @@ const PRESET_COLORS = [
   '#ffffff',
 ];
 
-// =====================================================
-// === Компонент ===
-// =====================================================
 function ImportDialog({
   fileName,
   objectCount,
   sizeBytes,
+  defaults,
   onConfirm,
   onCancel,
 }: ImportDialogProps) {
-  const [color, setColor] = useState('#4a90d9');
-  const [pixelSize, setPixelSize] = useState(6);
-  const [visible, setVisible] = useState(true);
+  const d = defaults || {};
+
+  // ⚡ Инициализация из defaults
+  const [color, setColor] = useState(d.color || '#4a90d9');
+  const [pixelSize, setPixelSize] = useState(d.pixelSize ?? 6);
+  const [visible, setVisible] = useState(d.visible !== false);
   const [flyToBounds, setFlyToBounds] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
   const [showHidden, setShowHidden] = useState(true);
   const [importLinesAsMeasures, setImportLinesAsMeasures] = useState(false);
+  const [startCollapsed, setStartCollapsed] = useState(
+    d.startCollapsed !== false
+  );
 
   const sizeMb = sizeBytes ? sizeBytes / 1024 / 1024 : 0;
   const isLarge = sizeMb > 50;
@@ -57,13 +62,13 @@ function ImportDialog({
       showHidden,
       importLinesAsMeasures,
       defaultRulerType: 'path',
+      startCollapsed,
     });
   };
 
   return (
     <div style={styles.backdrop} onClick={onCancel}>
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-        {/* === HEADER === */}
         <div style={styles.header}>
           <Upload size={16} color="var(--accent)" />
           <span style={styles.title}>Настройки импорта</span>
@@ -72,13 +77,16 @@ function ImportDialog({
           </button>
         </div>
 
-        {/* === CONTENT === */}
         <div style={styles.content}>
           <div style={styles.fileInfo}>
             <div style={styles.fileName}>{fileName}</div>
             <div style={styles.fileMeta}>
-              Найдено объектов: {objectCount}
+              Найдено узлов дерева: {objectCount}
               {sizeBytes ? ' · Размер: ' + sizeMb.toFixed(2) + ' МБ' : ''}
+            </div>
+            <div style={styles.hintSmall}>
+              «Узлы» включают папки; фактическое число точек/линий будет
+              меньше и появится после импорта.
             </div>
           </div>
 
@@ -103,7 +111,6 @@ function ImportDialog({
             </div>
           )}
 
-          {/* === ОТОБРАЖЕНИЕ === */}
           <section style={styles.section}>
             <h3 style={styles.sectionTitle}>
               <Eye size={12} /> Отображение
@@ -156,13 +163,29 @@ function ImportDialog({
                 Импортировать линии как измерения
               </span>
             </label>
+          </section>
+
+          <section style={styles.section}>
+            <h3 style={styles.sectionTitle}>
+              <FolderTree size={12} /> Дерево
+            </h3>
+            <label style={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={startCollapsed}
+                onChange={(e) => setStartCollapsed(e.target.checked)}
+              />
+              <span style={{ marginLeft: 8 }}>
+                Свернуть папки после импорта
+              </span>
+            </label>
             <div style={styles.hintSmall}>
-              Если включено — все объекты из файла будут видимы, даже если
-              в KML они помечены как скрытые.
+              Включено — все папки KML будут свёрнуты, чтобы дерево не
+              раздувалось. Объекты всё равно отрисуются (если отображение
+              включено выше).
             </div>
           </section>
 
-          {/* === ЦВЕТ === */}
           <section style={styles.section}>
             <h3 style={styles.sectionTitle}>
               <Palette size={12} /> Цвет объектов по умолчанию
@@ -199,7 +222,6 @@ function ImportDialog({
             </div>
           </section>
 
-          {/* === РАЗМЕР === */}
           <section style={styles.section}>
             <h3 style={styles.sectionTitle}>
               <Ruler size={12} /> Размер точек
@@ -218,7 +240,6 @@ function ImportDialog({
           </section>
         </div>
 
-        {/* === FOOTER === */}
         <div style={styles.footer}>
           <button style={styles.cancelBtn} onClick={onCancel}>
             Отмена
@@ -232,9 +253,6 @@ function ImportDialog({
   );
 }
 
-// =====================================================
-// === Стили ===
-// =====================================================
 const styles: Record<string, React.CSSProperties> = {
   backdrop: {
     position: 'fixed',
@@ -310,6 +328,13 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11.5,
     color: 'var(--text-secondary)',
   },
+  hintSmall: {
+    fontSize: 10.5,
+    color: 'var(--text-muted)',
+    marginTop: 4,
+    fontStyle: 'italic',
+    lineHeight: 1.4,
+  },
   warningBox: {
     display: 'flex',
     alignItems: 'flex-start',
@@ -353,13 +378,6 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     color: 'var(--text-primary)',
     padding: '5px 4px',
-  },
-  hintSmall: {
-    fontSize: 10.5,
-    color: 'var(--text-muted)',
-    marginTop: 4,
-    fontStyle: 'italic',
-    lineHeight: 1.4,
   },
   colorRow: {
     display: 'flex',

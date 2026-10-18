@@ -6,6 +6,8 @@
 import { writeFile, mkdir } from '@tauri-apps/plugin-fs';
 import { saveFileDialog } from './dialogs';
 
+export type ScreenshotFormat = 'png' | 'jpg';
+
 // -----------------------------------------------------
 // Конвертация dataURL → Uint8Array
 // -----------------------------------------------------
@@ -27,7 +29,10 @@ export function dataUrlToUint8Array(dataUrl: string): Uint8Array {
 // -----------------------------------------------------
 // Имя файла с датой
 // -----------------------------------------------------
-export function buildScreenshotName(prefix?: string): string {
+export function buildScreenshotName(
+  prefix?: string,
+  format: ScreenshotFormat = 'png'
+): string {
   const d = new Date();
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -36,27 +41,21 @@ export function buildScreenshotName(prefix?: string): string {
   const mi = String(d.getMinutes()).padStart(2, '0');
   const ss = String(d.getSeconds()).padStart(2, '0');
   const p = (prefix || 'poiskhelper').replace(/[\\/:*?"<>|]/g, '_');
+  const ext = format === 'jpg' ? 'jpg' : 'png';
   return (
-    p + '-' + yyyy + '-' + mm + '-' + dd + '-' + hh + '-' + mi + '-' + ss + '.png'
+    p + '-' + yyyy + '-' + mm + '-' + dd + '-' + hh + '-' + mi + '-' + ss + '.' + ext
   );
 }
 
 // -----------------------------------------------------
-// ⚡ Определение разделителя пути
+// Склейка папки и имени файла
 // -----------------------------------------------------
-function detectSeparator(path: string): string {
-  if (!path) return '/';
-  // Windows-путь: "C:\Users\..." или "...\..."
-  if (path.indexOf('\\') >= 0) return '\\';
-  // UNIX-путь: "/home/user/..." или относительный с "/"
-  return '/';
-}
-
-function ensureTrailingSeparator(path: string): string {
-  if (!path) return path;
-  const last = path[path.length - 1];
-  if (last === '/' || last === '\\') return path;
-  return path + detectSeparator(path);
+function joinPath(dir: string, fileName: string): string {
+  if (!dir) return fileName;
+  const last = dir[dir.length - 1];
+  if (last === '/' || last === '\\') return dir + fileName;
+  const sep = dir.indexOf('\\') >= 0 ? '\\' : '/';
+  return dir + sep + fileName;
 }
 
 // -----------------------------------------------------
@@ -65,6 +64,7 @@ function ensureTrailingSeparator(path: string): string {
 export interface SaveScreenshotOptions {
   autoSaveDir?: string | null;
   prefixName?: string;
+  format?: ScreenshotFormat;
 }
 
 export async function saveScreenshot(
@@ -76,6 +76,7 @@ export async function saveScreenshot(
 
     const autoSaveDir = options.autoSaveDir || null;
     const prefixName = options.prefixName || 'poiskhelper';
+    const format: ScreenshotFormat = options.format || 'png';
     const bytes = dataUrlToUint8Array(dataUrl);
 
     // === Автосохранение ===
@@ -86,9 +87,8 @@ export async function saveScreenshot(
         // mkdir может кинуть, если папка уже есть — игнорируем
       }
 
-      const dir = ensureTrailingSeparator(autoSaveDir);
-      const fileName = buildScreenshotName(prefixName);
-      const fullPath = dir + fileName;
+      const fileName = buildScreenshotName(prefixName, format);
+      const fullPath = joinPath(autoSaveDir, fileName);
 
       await writeFile(fullPath, bytes);
       console.log('saveScreenshot: сохранено в', fullPath);
@@ -96,7 +96,7 @@ export async function saveScreenshot(
     }
 
     // === Диалог сохранения ===
-    const defaultName = buildScreenshotName(prefixName);
+    const defaultName = buildScreenshotName(prefixName, format);
     const path = await saveFileDialog({
       title: 'Сохранить скриншот',
       defaultPath: defaultName,

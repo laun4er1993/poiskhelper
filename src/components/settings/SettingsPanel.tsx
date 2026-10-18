@@ -1,6 +1,6 @@
 // =====================================================
 // src/components/settings/SettingsPanel.tsx
-// Главный компонент панели настроек
+// Главный компонент панели настроек — полностью респонсивный
 // =====================================================
 
 import { useState, useEffect } from 'react';
@@ -17,6 +17,8 @@ import {
   Ruler,
   RotateCcw,
   Check,
+  Menu,
+  ChevronDown,
 } from 'lucide-react';
 import type { AppSettings } from '../../types/settings';
 import { DEFAULT_SETTINGS } from '../../types/settings';
@@ -34,9 +36,6 @@ import MeasureTab from './tabs/MeasureTab';
 import ThemeTab from './tabs/ThemeTab';
 import MapTab from './tabs/MapTab';
 
-// =====================================================
-// === Вкладки ===
-// =====================================================
 const TABS: TabDef[] = [
   { id: 'general', label: 'Общие', icon: SettingsIcon },
   { id: 'text', label: 'Подписи', icon: TypeIcon },
@@ -49,9 +48,36 @@ const TABS: TabDef[] = [
   { id: 'map', label: 'Карта', icon: Globe },
 ];
 
-// =====================================================
-// === Компонент ===
-// =====================================================
+// -----------------------------------------------------
+// ⚡ Респонсив: смотрим реальную ширину окна
+// -----------------------------------------------------
+function useWindowWidth(): number {
+  const [w, setW] = useState(function () {
+    return typeof window !== 'undefined' ? window.innerWidth : 1024;
+  });
+
+  useEffect(
+    function () {
+      let raf: number | null = null;
+      const update = function () {
+        if (raf !== null) return;
+        raf = window.requestAnimationFrame(function () {
+          raf = null;
+          setW(window.innerWidth);
+        });
+      };
+      window.addEventListener('resize', update);
+      return function () {
+        window.removeEventListener('resize', update);
+        if (raf !== null) window.cancelAnimationFrame(raf);
+      };
+    },
+    []
+  );
+
+  return w;
+}
+
 function SettingsPanel({
   settings,
   theme,
@@ -65,6 +91,11 @@ function SettingsPanel({
   onClose,
 }: SettingsPanelProps) {
   const [tab, setTab] = useState<TabId>('general');
+  const windowWidth = useWindowWidth();
+
+  // ⚡ Пороги
+  const isNarrow = windowWidth < 760;
+  const isVeryNarrow = windowWidth < 480;
 
   // Esc — закрыть
   useEffect(function () {
@@ -90,10 +121,21 @@ function SettingsPanel({
     onColorsChange(DEFAULT_COLORS);
   };
 
+  const activeTabDef = TABS.find(function (t) {
+    return t.id === tab;
+  });
+  const ActiveIcon = activeTabDef ? activeTabDef.icon : SettingsIcon;
+
   return (
     <div style={styles.backdrop} onClick={onClose}>
       <div
-        style={styles.modal}
+        style={{
+          ...styles.modal,
+          ...(isVeryNarrow ? styles.modalFullScreen : {}),
+          width: isVeryNarrow ? '100vw' : Math.min(820, windowWidth - 24),
+          maxHeight: isVeryNarrow ? '100vh' : 'calc(100vh - 24px)',
+          borderRadius: isVeryNarrow ? 0 : 8,
+        }}
         onClick={function (e) {
           e.stopPropagation();
         }}
@@ -102,6 +144,12 @@ function SettingsPanel({
         <div style={styles.header}>
           <SettingsIcon size={16} color="var(--accent)" />
           <span style={styles.title}>Настройки</span>
+          {isNarrow && (
+            <span style={styles.headerActiveTab}>
+              <ActiveIcon size={11} />
+              {activeTabDef?.label}
+            </span>
+          )}
           <button
             style={styles.closeBtn}
             onClick={onClose}
@@ -112,31 +160,63 @@ function SettingsPanel({
         </div>
 
         {/* === TABS === */}
-        <div style={styles.tabsBar}>
-          {TABS.map(function (t) {
-            const Icon = t.icon;
-            const active = tab === t.id;
-            return (
-              <button
-                key={t.id}
-                style={{
-                  ...styles.tabBtn,
-                  backgroundColor: active ? 'var(--accent)' : 'transparent',
-                  color: active
-                    ? 'var(--accent-text)'
-                    : 'var(--text-secondary)',
-                  borderColor: active ? 'var(--accent)' : 'var(--border)',
+        {isNarrow ? (
+          // ⚡ Узкое окно — dropdown-переключатель
+          <div style={styles.tabsDropdownWrap}>
+            <div style={styles.tabsDropdown}>
+              <Menu size={12} color="var(--accent)" />
+              <select
+                value={tab}
+                onChange={function (e) {
+                  setTab(e.target.value as TabId);
                 }}
-                onClick={function () {
-                  setTab(t.id);
-                }}
+                style={styles.tabsSelect}
               >
-                <Icon size={12} />
-                <span>{t.label}</span>
-              </button>
-            );
-          })}
-        </div>
+                {TABS.map(function (t) {
+                  return (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  );
+                })}
+              </select>
+              <ChevronDown
+                size={12}
+                color="var(--text-muted)"
+                style={{ pointerEvents: 'none', marginLeft: -20 }}
+              />
+            </div>
+          </div>
+        ) : (
+          // ⚡ Широкое окно — полоса с чипами
+          <div style={styles.tabsBar}>
+            {TABS.map(function (t) {
+              const Icon = t.icon;
+              const active = tab === t.id;
+              return (
+                <button
+                  key={t.id}
+                  style={{
+                    ...styles.tabBtn,
+                    backgroundColor: active
+                      ? 'var(--accent)'
+                      : 'transparent',
+                    color: active
+                      ? 'var(--accent-text)'
+                      : 'var(--text-secondary)',
+                    borderColor: active ? 'var(--accent)' : 'var(--border)',
+                  }}
+                  onClick={function () {
+                    setTab(t.id);
+                  }}
+                >
+                  <Icon size={12} />
+                  <span>{t.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* === CONTENT === */}
         <div style={styles.content}>
@@ -181,9 +261,15 @@ function SettingsPanel({
         </div>
 
         {/* === FOOTER === */}
-        <div style={styles.footer}>
+        <div
+          style={{
+            ...styles.footer,
+            ...(isVeryNarrow ? styles.footerWrap : {}),
+          }}
+        >
           <button style={styles.resetBtn} onClick={handleReset}>
-            <RotateCcw size={13} /> Сбросить всё
+            <RotateCcw size={13} />
+            {isVeryNarrow ? 'Сброс' : 'Сбросить всё'}
           </button>
           <button style={styles.doneBtn} onClick={onClose}>
             <Check size={13} /> Готово
@@ -194,9 +280,6 @@ function SettingsPanel({
   );
 }
 
-// =====================================================
-// === Стили ===
-// =====================================================
 const styles: Record<string, React.CSSProperties> = {
   backdrop: {
     position: 'fixed',
@@ -214,8 +297,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   modal: {
     width: 820,
-    maxWidth: '96vw',
-    maxHeight: '92vh',
+    maxWidth: 'calc(100vw - 24px)',
+    maxHeight: 'calc(100vh - 24px)',
     backgroundColor: 'var(--bg-modal)',
     borderRadius: 'var(--radius)',
     border: '1px solid var(--border)',
@@ -225,6 +308,10 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-primary)',
     overflow: 'hidden',
     animation: 'scaleIn 0.18s ease',
+  },
+  modalFullScreen: {
+    borderRadius: 0,
+    border: 'none',
   },
   header: {
     height: 48,
@@ -237,9 +324,24 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   title: {
-    flex: 1,
     fontSize: 14,
     fontWeight: 600,
+    flexShrink: 0,
+  },
+  headerActiveTab: {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 5,
+    fontSize: 11.5,
+    color: 'var(--accent)',
+    fontWeight: 600,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    minWidth: 0,
+    justifyContent: 'flex-end',
+    paddingRight: 4,
   },
   closeBtn: {
     width: 28,
@@ -252,6 +354,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 'var(--radius-small)',
     color: 'var(--text-secondary)',
     cursor: 'pointer',
+    marginLeft: 'auto',
+    flexShrink: 0,
   },
   tabsBar: {
     display: 'flex',
@@ -261,6 +365,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: '1px solid var(--border)',
     flexShrink: 0,
     overflowX: 'auto',
+    overflowY: 'hidden',
   },
   tabBtn: {
     display: 'flex',
@@ -277,9 +382,41 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap',
     flexShrink: 0,
   },
+  tabsDropdownWrap: {
+    padding: '8px 12px',
+    backgroundColor: 'var(--bg-panel-header)',
+    borderBottom: '1px solid var(--border)',
+    flexShrink: 0,
+  },
+  tabsDropdown: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '6px 10px',
+    backgroundColor: 'var(--bg-input)',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-small)',
+    position: 'relative',
+  },
+  tabsSelect: {
+    flex: 1,
+    backgroundColor: 'transparent',
+    border: 'none',
+    outline: 'none',
+    color: 'var(--text-primary)',
+    fontSize: 13,
+    fontFamily: 'inherit',
+    fontWeight: 600,
+    cursor: 'pointer',
+    padding: '2px 0',
+    appearance: 'none',
+    WebkitAppearance: 'none',
+    MozAppearance: 'none',
+  },
   content: {
     flex: 1,
     overflowY: 'auto',
+    overflowX: 'hidden',
     padding: '14px 20px',
     minHeight: 0,
   },
@@ -292,6 +429,13 @@ const styles: Record<string, React.CSSProperties> = {
     borderTop: '1px solid var(--border)',
     justifyContent: 'space-between',
     flexShrink: 0,
+    gap: 8,
+  },
+  footerWrap: {
+    height: 'auto',
+    padding: '10px 12px',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
   },
   resetBtn: {
     display: 'flex',
@@ -305,6 +449,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12.5,
     cursor: 'pointer',
     fontFamily: 'inherit',
+    whiteSpace: 'nowrap',
   },
   doneBtn: {
     display: 'flex',
@@ -319,6 +464,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     cursor: 'pointer',
     fontFamily: 'inherit',
+    whiteSpace: 'nowrap',
   },
 };
 
